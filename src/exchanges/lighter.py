@@ -45,6 +45,25 @@ class LighterClient:
         self.market_info = {}  # Cache market information
         self.symbol_to_market_id = {}  # Map symbol (SOL_USDC) to market_id (int)
 
+    def _convert_1000x_size(self, symbol: str, size: float, to_lighter: bool) -> float:
+        """
+        Convert size for 1000X markets (e.g., 1000BONK)
+
+        On Lighter: 1 unit of 1000BONK = 1000 actual BONK tokens
+
+        Args:
+            symbol: Market symbol
+            size: Size to convert
+            to_lighter: True to convert to Lighter format (divide by 1000),
+                       False to convert from Lighter format (multiply by 1000)
+
+        Returns:
+            Converted size
+        """
+        if symbol.startswith("1000"):
+            return size / 1000 if to_lighter else size * 1000
+        return size
+
     async def initialize(self):
         """Initialize the Lighter SignerClient and AccountApi"""
         if self.client is None:
@@ -198,12 +217,8 @@ class LighterClient:
                         market_info = await self.get_market_info(symbol)
                         pos = float(position.position) / market_info["base_multiplier"]
 
-                        # Handle 1000X markets (1000BONK, 1000PEPE, etc.)
-                        # On Lighter: 1 unit = 1000 actual tokens
-                        # So if position is 1 unit on Lighter, actual position is 1000 tokens
-                        if symbol.startswith("1000"):
-                            pos = pos * 1000
-                            logger.debug(f"Converting position for {symbol}: Lighter position * 1000 = {pos}")
+                        # Convert for 1000X markets (e.g., 1000BONK)
+                        pos = self._convert_1000x_size(symbol, pos, to_lighter=False)
 
                         return pos
 
@@ -231,7 +246,6 @@ class LighterClient:
         try:
             # Get numeric market ID
             market_id = await self.get_market_id(symbol)
-            market_info = await self.get_market_info(symbol)
 
             # Get order book using order_api
             orderbook = await self.client.order_api.order_book_orders(
@@ -294,12 +308,8 @@ class LighterClient:
         market_id = await self.get_market_id(symbol)
         market_info = await self.get_market_info(symbol)
 
-        # Handle 1000X markets (1000BONK, 1000PEPE, etc.)
-        # On Lighter: 1 unit of 1000BONK = 1000 actual BONK tokens
-        # So if we want to trade 1000 BONK, we order 1 unit on Lighter
-        if symbol.startswith("1000"):
-            size = size / 1000
-            logger.debug(f"Converting size for {symbol}: original size / 1000 = {size}")
+        # Convert size for 1000X markets (e.g., 1000BONK)
+        size = self._convert_1000x_size(symbol, size, to_lighter=True)
 
         # Convert to Lighter's integer format
         is_ask = side.lower() == "sell"
@@ -400,64 +410,3 @@ class LighterClient:
         except Exception as e:
             logger.error(f"Failed to cancel order {order_id}: {e}")
             return False
-
-    async def get_order_status(self, symbol: str, order_id: str) -> Dict:
-        """
-        Get order status
-
-        Args:
-            symbol: Market symbol (e.g., "SOL_USDC")
-            order_id: Order ID
-
-        Returns:
-            Order status dict
-        """
-        if self.client is None:
-            await self.initialize()
-
-        try:
-            market_id = await self.get_market_id(symbol)
-            market_info = await self.get_market_info(symbol)
-
-            # Get active orders for the account
-            auth_token = await self.client.create_auth_token()
-            active_orders = await self.client.order_api.account_active_orders(
-                auth_token=auth_token,
-                market_id=market_id
-            )
-
-            # Check if our order is in active orders
-            if active_orders:
-                for order in active_orders:
-                    if str(order.order_id) == str(order_id):
-                        return {
-                            "status": "open",
-                            "filled_size": float(order.filled_size or 0) / market_info["base_multiplier"],
-                            "remaining_size": float(order.size - (order.filled_size or 0)) / market_info["base_multiplier"],
-                        }
-
-            # Not in active orders, check inactive orders (filled/canceled)
-            inactive_orders = await self.client.order_api.account_inactive_orders(
-                auth_token=auth_token,
-                market_id=market_id,
-                limit=20  # Check recent inactive orders
-            )
-
-            if inactive_orders:
-                for order in inactive_orders:
-                    if str(order.order_id) == str(order_id):
-                        return {
-                            "status": "filled" if order.is_filled else "canceled",
-                            "filled_size": float(order.filled_size or 0) / market_info["base_multiplier"],
-                            "remaining_size": 0.0,
-                        }
-
-            return {
-                "status": "not_found",
-                "filled_size": 0.0,
-                "remaining_size": 0.0,
-            }
-
-        except Exception as e:
-            logger.error(f"Failed to get order status for {order_id}: {e}")
-            raise
