@@ -239,10 +239,10 @@ class LighterClient:
         Get current market price (mid price)
 
         Args:
-            symbol: Market symbol (e.g., "SOL_USDC")
+            symbol: Market symbol (e.g., "SOL", "1000BONK")
 
         Returns:
-            Current mid price
+            Current mid price (per single token, adjusted for 1000X markets)
         """
         if self.client is None:
             await self.initialize()
@@ -257,28 +257,39 @@ class LighterClient:
                 limit=1  # Only need best bid/ask
             )
 
+            price = 0.0
+
             if orderbook and hasattr(orderbook, 'bids') and hasattr(orderbook, 'asks'):
                 if orderbook.bids and orderbook.asks:
                     # bids[0] and asks[0] are SimpleOrder objects with .price attribute
                     # Price is already in correct format (string like "3726.21"), no need to divide
                     best_bid = float(orderbook.bids[0].price)
                     best_ask = float(orderbook.asks[0].price)
-                    return (best_bid + best_ask) / 2
+                    price = (best_bid + best_ask) / 2
 
             # Fallback: try to get from recent trades
-            trades = await self.client.order_api.recent_trades(
-                market_id=market_id,
-                limit=1
-            )
+            if price == 0.0:
+                trades = await self.client.order_api.recent_trades(
+                    market_id=market_id,
+                    limit=1
+                )
 
-            if trades and len(trades) > 0:
-                # trades[0] is likely also an object with .price attribute
-                trade_price = getattr(trades[0], 'price', None)
-                if trade_price:
-                    return float(trade_price)
+                if trades and len(trades) > 0:
+                    # trades[0] is likely also an object with .price attribute
+                    trade_price = getattr(trades[0], 'price', None)
+                    if trade_price:
+                        price = float(trade_price)
 
-            logger.warning(f"No price data available for {symbol}")
-            return 0.0
+            if price == 0.0:
+                logger.warning(f"No price data available for {symbol}")
+                return 0.0
+
+            # For 1000X markets (e.g., 1000BONK), the price is for 1000 tokens
+            # We need to divide by 1000 to get the price per single token
+            if symbol.startswith("1000"):
+                price = price / 1000
+
+            return price
 
         except Exception as e:
             logger.error(f"Failed to get price for {symbol}: {e}")
