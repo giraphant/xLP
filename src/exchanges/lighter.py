@@ -323,11 +323,17 @@ class LighterClient:
         market_id = await self.get_market_id(symbol)
         market_info = await self.get_market_info(symbol)
 
-        # Save original size for USD calculation (before conversion)
+        # Save original values for USD calculation (before conversion)
         original_size = size
+        original_price = price
 
         # Convert size for 1000X markets (e.g., 1000BONK)
         size = self._convert_1000x_size(symbol, size, to_lighter=True)
+
+        # Convert price for 1000X markets
+        # For 1000BONK: price comes in as per-BONK ($0.000015), but Lighter needs per-1000BONK ($0.015)
+        if symbol.startswith("1000"):
+            price = price * 1000
 
         # Convert to Lighter's integer format
         is_ask = side.lower() == "sell"
@@ -339,11 +345,10 @@ class LighterClient:
         logger.info(f"  Size: {size:.8f} {symbol}")
         logger.info(f"  Base multiplier: {market_info['base_multiplier']} (decimals: {market_info['size_decimals']})")
         logger.info(f"  BaseAmount (integer): {base_amount}")
-        logger.info(f"  Price: ${price:.2f}, Price int: {price_int}")
+        logger.info(f"  Price: ${price:.6f}, Price int: {price_int}")
 
-        # Calculate order value in USD using ORIGINAL size (before 1000X conversion)
-        # Because price is per single token, not per 1000 tokens
-        order_value_usd = original_size * price
+        # Calculate order value in USD using ORIGINAL values (before conversions)
+        order_value_usd = original_size * original_price
         logger.info(f"  Order value: ${order_value_usd:.2f}")
 
         # Check minimum order size
@@ -445,7 +450,7 @@ class LighterClient:
         market_id = await self.get_market_id(symbol)
         market_info = await self.get_market_info(symbol)
 
-        # Get current market price
+        # Get current market price (already adjusted for 1000X markets by get_price)
         current_price = await self.get_price(symbol)
 
         # Use 1% slippage for market-like execution (minimal IL)
@@ -456,6 +461,11 @@ class LighterClient:
 
         # Convert size for 1000X markets (e.g., 1000BONK)
         size = self._convert_1000x_size(symbol, size, to_lighter=True)
+
+        # Convert price for 1000X markets
+        # For 1000BONK: price is per-BONK ($0.000015), but Lighter needs per-1000BONK ($0.015)
+        if symbol.startswith("1000"):
+            price = price * 1000
 
         # Convert to Lighter's integer format
         is_ask = side.lower() == "sell"
