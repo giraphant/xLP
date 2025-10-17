@@ -9,6 +9,7 @@ import signal
 import sys
 import logging
 import os
+import traceback
 from datetime import datetime
 from hedge_engine import HedgeEngine
 
@@ -19,6 +20,11 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
+
+# 禁用第三方库的DEBUG日志
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 
 class HedgeBot:
@@ -51,7 +57,6 @@ class HedgeBot:
 
                 except Exception as e:
                     print(f"\n❌ 发生错误: {e}")
-                    import traceback
                     traceback.print_exc()
 
                     # 错误后等待一段时间再重试
@@ -83,7 +88,6 @@ async def main():
         await bot.run()
     except Exception as e:
         print(f"\n❌ 致命错误: {e}")
-        import traceback
         traceback.print_exc()
         sys.exit(1)
 
