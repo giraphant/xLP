@@ -19,7 +19,7 @@ from pools import jlp, alp
 
 
 class HedgeEngine:
-    def __init__(self, config_path: str = "config.json", state_path: str = "state.json"):
+    def __init__(self, config_path: str = "config.json", state_path: str = "data/state.json"):
         self.config_path = Path(config_path)
         self.state_path = Path(state_path)
 
