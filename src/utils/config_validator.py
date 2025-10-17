@@ -333,14 +333,35 @@ class HedgeConfig:
             config_dict["rpc_url"] = os.getenv("RPC_URL")
 
         # 预设偏移配置（用于外部对冲调整）
-        if "PREDEFINED_OFFSET" in os.environ:
+        # 支持两种方式：
+        # 方式1（推荐）：独立环境变量 PREDEFINED_OFFSET_SOL=-1.0
+        # 方式2：JSON字符串 PREDEFINED_OFFSET='{"SOL": -1.0}'
+        predefined_offset = {}
+
+        # 方式1：从独立的环境变量读取（优先）
+        for symbol in ["SOL", "ETH", "BTC", "BONK"]:
+            env_key = f"PREDEFINED_OFFSET_{symbol}"
+            if env_key in os.environ:
+                try:
+                    predefined_offset[symbol] = float(os.getenv(env_key))
+                    logger.info(f"Loaded predefined_offset from {env_key}: {predefined_offset[symbol]}")
+                except ValueError as e:
+                    logger.error(f"Invalid value in {env_key}: {e}")
+                    raise ValidationError(f"{env_key} must be a valid number: {e}")
+
+        # 方式2：从JSON字符串读取（兼容旧配置）
+        if "PREDEFINED_OFFSET" in os.environ and not predefined_offset:
             try:
                 predefined_offset_str = os.getenv("PREDEFINED_OFFSET")
-                config_dict["predefined_offset"] = json.loads(predefined_offset_str)
-                logger.info(f"Loaded predefined_offset from env: {config_dict['predefined_offset']}")
+                predefined_offset = json.loads(predefined_offset_str)
+                logger.info(f"Loaded predefined_offset from JSON env: {predefined_offset}")
             except json.JSONDecodeError as e:
                 logger.error(f"Invalid JSON in PREDEFINED_OFFSET: {e}")
                 raise ValidationError(f"PREDEFINED_OFFSET must be valid JSON: {e}")
+
+        # 保存到配置字典
+        if predefined_offset:
+            config_dict["predefined_offset"] = predefined_offset
 
         return config_dict
 
