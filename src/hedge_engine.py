@@ -159,6 +159,18 @@ class HedgeEngine:
         zone = int((abs_usd - self.config["threshold_min_usd"]) / self.config["threshold_step_usd"])
         return zone
 
+    def _calculate_close_size(self, offset: float) -> float:
+        """
+        计算平仓数量
+
+        Args:
+            offset: 偏移量（正数或负数）
+
+        Returns:
+            应平仓的数量（根据close_ratio配置）
+        """
+        return abs(offset) * (self.config["close_ratio"] / 100)
+
     def calculate_order_price(
         self,
         cost_basis: float,
@@ -197,6 +209,20 @@ class HedgeEngine:
             ideal_position: 理想持仓
             current_price: 当前价格
         """
+        # 确保symbol在state中存在，如果不存在则初始化
+        if symbol not in self.state["symbols"]:
+            self.state["symbols"][symbol] = {
+                "offset": 0.0,
+                "cost_basis": 0.0,
+                "last_updated": None,
+                "monitoring": {
+                    "active": False,
+                    "current_zone": None,
+                    "order_id": None,
+                    "started_at": None
+                }
+            }
+
         state = self.state["symbols"][symbol]
 
         # 从交易所获取实际持仓
@@ -263,7 +289,7 @@ class HedgeEngine:
                 order_price = self.calculate_order_price(
                     new_cost, new_offset, self.config["order_price_offset"]
                 )
-                order_size = abs(new_offset) * (self.config["close_ratio"] / 100)
+                order_size = self._calculate_close_size(new_offset)
                 side = "sell" if new_offset > 0 else "buy"
 
                 print(f"  → 进入区间 {new_zone}，挂单: {side} {order_size:.4f} @ ${order_price:.2f}")
@@ -292,7 +318,7 @@ class HedgeEngine:
                     await self.exchange.cancel_order(state["monitoring"]["order_id"])
 
                 # 市价平仓
-                order_size = abs(new_offset) * (self.config["close_ratio"] / 100)
+                order_size = self._calculate_close_size(new_offset)
                 side = "sell" if new_offset > 0 else "buy"
 
                 await self.exchange.place_market_order(symbol, side, order_size)
