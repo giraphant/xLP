@@ -5,12 +5,10 @@
 """
 
 import json
-import os
 import asyncio
 import logging
 import time
-from datetime import datetime, timedelta
-from typing import Dict, Optional, Tuple
+from datetime import datetime
 from pathlib import Path
 
 # 导入本地模块
@@ -18,38 +16,13 @@ from exchanges.interface import create_exchange
 from notifications.pushover import Notifier
 from core.offset_tracker import calculate_offset_and_cost
 from core.state_manager import StateManager
-from core.circuit_breaker import CircuitBreaker, CircuitBreakerManager
-from core.exceptions import (
-    HedgeEngineError,
-    ChainReadError,
-    ExchangeError,
-    OrderPlacementError,
-    OrderCancellationError,
-    InvalidConfigError,
-    MissingConfigError,
-    CalculationError,
-    classify_exception,
-    should_retry,
-    get_retry_delay
-)
+from core.circuit_breaker import CircuitBreakerManager
+from core.exceptions import HedgeEngineError, InvalidConfigError
 from core.config_validator import HedgeConfig, ValidationError
 from core.metrics import MetricsCollector
-from core.pipeline import (
-    HedgePipeline,
-    PipelineContext,
-    create_hedge_pipeline,
-    FetchPoolDataStep,
-    CalculateIdealHedgesStep,
-    FetchMarketDataStep,
-    CalculateOffsetsStep,
-    DecideActionsStep,
-    ExecuteActionsStep,
-    logging_middleware,
-    timing_middleware,
-    error_collection_middleware
-)
-from core.decision_engine import DecisionEngine, TradingAction, ActionType
-from core.action_executor import ActionExecutor, ExecutionResult
+from core.pipeline import PipelineContext, create_hedge_pipeline
+from core.decision_engine import DecisionEngine
+from core.action_executor import ActionExecutor
 from pools import jlp, alp
 
 logger = logging.getLogger(__name__)
@@ -96,62 +69,7 @@ class HedgeEngine:
         # 创建完整的数据处理管道
         self.pipeline = self._create_full_pipeline()
 
-    def _load_config(self) -> dict:
-        """
-        加载配置 - 优先使用环境变量，config.json作为默认值
-        环境变量 > config.json
-        """
-        # 从config.json加载默认值（如果存在）
-        config = {}
-        if self.config_path.exists():
-            with open(self.config_path, 'r', encoding='utf-8') as f:
-                config = json.load(f)
-
-        # 从环境变量覆盖（优先级更高）
-        config["jlp_amount"] = float(os.getenv("JLP_AMOUNT", config.get("jlp_amount", 50000)))
-        config["alp_amount"] = float(os.getenv("ALP_AMOUNT", config.get("alp_amount", 10000)))
-
-        config["threshold_min_usd"] = float(os.getenv("THRESHOLD_MIN_USD", config.get("threshold_min_usd", 5.0)))
-        config["threshold_max_usd"] = float(os.getenv("THRESHOLD_MAX_USD", config.get("threshold_max_usd", 20.0)))
-        config["threshold_step_usd"] = float(os.getenv("THRESHOLD_STEP_USD", config.get("threshold_step_usd", 2.5)))
-        config["order_price_offset"] = float(os.getenv("ORDER_PRICE_OFFSET", config.get("order_price_offset", 0.2)))
-        config["close_ratio"] = float(os.getenv("CLOSE_RATIO", config.get("close_ratio", 40.0)))
-        config["timeout_minutes"] = int(os.getenv("TIMEOUT_MINUTES", config.get("timeout_minutes", 20)))
-        config["check_interval_seconds"] = int(os.getenv("CHECK_INTERVAL_SECONDS", config.get("check_interval_seconds", 60)))
-
-        # 初始偏移量（从环境变量或config.json）
-        initial_offset = config.get("initial_offset", {})
-        config["initial_offset"] = {
-            "SOL": float(os.getenv("INITIAL_OFFSET_SOL", initial_offset.get("SOL", 0.0))),
-            "ETH": float(os.getenv("INITIAL_OFFSET_ETH", initial_offset.get("ETH", 0.0))),
-            "BTC": float(os.getenv("INITIAL_OFFSET_BTC", initial_offset.get("BTC", 0.0))),
-            "BONK": float(os.getenv("INITIAL_OFFSET_BONK", initial_offset.get("BONK", 0.0))),
-        }
-
-        # Exchange配置
-        exchange_config = config.get("exchange", {})
-        config["exchange"] = {
-            "name": os.getenv("EXCHANGE_NAME", exchange_config.get("name", "mock")),
-            "private_key": os.getenv("EXCHANGE_PRIVATE_KEY", exchange_config.get("private_key", "")),
-            "account_index": int(os.getenv("EXCHANGE_ACCOUNT_INDEX", exchange_config.get("account_index", 0))),
-            "api_key_index": int(os.getenv("EXCHANGE_API_KEY_INDEX", exchange_config.get("api_key_index", 0))),
-            "base_url": os.getenv("EXCHANGE_BASE_URL", exchange_config.get("base_url", "https://mainnet.zklighter.elliot.ai")),
-        }
-
-        # Pushover配置
-        pushover_config = config.get("pushover", {})
-        config["pushover"] = {
-            "user_key": os.getenv("PUSHOVER_USER_KEY", pushover_config.get("user_key", "")),
-            "api_token": os.getenv("PUSHOVER_API_TOKEN", pushover_config.get("api_token", "")),
-            "enabled": os.getenv("PUSHOVER_ENABLED", str(pushover_config.get("enabled", True))).lower() in ("true", "1", "yes"),
-        }
-
-        # RPC URL
-        config["rpc_url"] = os.getenv("RPC_URL", config.get("rpc_url", "https://api.mainnet-beta.solana.com"))
-
-        return config
-
-    def _create_full_pipeline(self) -> HedgePipeline:
+    def _create_full_pipeline(self):
         """创建完整的数据处理管道"""
         # 准备池子计算器
         pool_calculators = {
@@ -168,34 +86,6 @@ class HedgeEngine:
             decision_engine=self.decision_engine,
             action_executor=self.action_executor
         )
-
-    def _validate_config(self):
-        """验证配置完整性和合理性"""
-        required_fields = ['jlp_amount', 'alp_amount', 'exchange', 'threshold_min_usd', 'threshold_max_usd']
-
-        # 检查必要字段
-        for field in required_fields:
-            if field not in self.config:
-                raise MissingConfigError(field)
-
-        # 验证阈值关系
-        if self.config['threshold_min_usd'] >= self.config['threshold_max_usd']:
-            raise InvalidConfigError(
-                'threshold_min_usd/threshold_max_usd',
-                f"min={self.config['threshold_min_usd']}, max={self.config['threshold_max_usd']}",
-                "threshold_min must be less than threshold_max"
-            )
-
-        # 验证close_ratio
-        if not 0 < self.config['close_ratio'] <= 100:
-            raise InvalidConfigError(
-                'close_ratio',
-                self.config['close_ratio'],
-                "must be between 0 and 100"
-            )
-
-        logger.info("Configuration validated successfully")
-
 
     async def run_once_pipeline(self):
         """使用管道执行一次完整的对冲检查循环"""
