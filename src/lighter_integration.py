@@ -242,8 +242,9 @@ class LighterClient:
             if orderbook and hasattr(orderbook, 'bids') and hasattr(orderbook, 'asks'):
                 if orderbook.bids and orderbook.asks:
                     # bids[0] and asks[0] are SimpleOrder objects with .price attribute
-                    best_bid = float(orderbook.bids[0].price) / market_info["price_multiplier"]
-                    best_ask = float(orderbook.asks[0].price) / market_info["price_multiplier"]
+                    # Price is already in correct format (string like "3726.21"), no need to divide
+                    best_bid = float(orderbook.bids[0].price)
+                    best_ask = float(orderbook.asks[0].price)
                     return (best_bid + best_ask) / 2
 
             # Fallback: try to get from recent trades
@@ -256,7 +257,7 @@ class LighterClient:
                 # trades[0] is likely also an object with .price attribute
                 trade_price = getattr(trades[0], 'price', None)
                 if trade_price:
-                    return float(trade_price) / market_info["price_multiplier"]
+                    return float(trade_price)
 
             logger.warning(f"No price data available for {symbol}")
             return 0.0
