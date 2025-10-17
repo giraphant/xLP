@@ -13,41 +13,21 @@ from core.pipeline import PipelineContext
 logger = logging.getLogger(__name__)
 
 
-async def detailed_reporting_middleware(
-    context: PipelineContext,
-    next_step: Callable[[PipelineContext], Awaitable[PipelineContext]]
-) -> PipelineContext:
+async def generate_position_report(context: PipelineContext, state_manager=None):
     """
-    详细报告中间件 - 在 pipeline 执行后生成详细报告
+    生成详细的持仓报告
 
-    显示信息：
-    - 持仓状态（偏移、价格、成本）
-    - 浮动盈亏
-    - 监控状态
-    - 决策详情和原因
+    Args:
+        context: Pipeline context with offsets, prices, actions
+        state_manager: State manager for monitoring info (optional)
     """
-    # 先执行 pipeline
-    context = await next_step(context)
-
-    # 如果有 offsets 数据，生成详细报告
-    if context.offsets and context.prices:
-        await _generate_position_report(context)
-
-    return context
-
-
-async def _generate_position_report(context: PipelineContext):
-    """生成详细的持仓报告"""
-    from core.state_manager import StateManager
+    if not context.offsets or not context.prices:
+        return
 
     logger.info("")
     logger.info("=" * 70)
     logger.info("📊 DETAILED POSITION REPORT")
     logger.info("=" * 70)
-
-    # 需要从 context 获取 state_manager（如果有的话）
-    # 这里我们从 metadata 中获取，或者作为参数传入
-    state_manager = context.metadata.get("state_manager")
 
     total_exposure = 0
     total_pnl = 0

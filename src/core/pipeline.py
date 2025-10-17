@@ -669,9 +669,11 @@ def create_hedge_pipeline(
 # ==================== 中间件 ====================
 
 async def logging_middleware(context: PipelineContext, phase: str):
-    """日志中间件"""
+    """日志中间件（自动遮蔽敏感信息）"""
     if phase == "before":
-        logger.debug(f"Pipeline starting with config: {context.config}")
+        from core.logging_utils import mask_sensitive_data
+        masked_config = mask_sensitive_data(context.config)
+        logger.debug(f"Pipeline starting with config: {masked_config}")
     elif phase == "after":
         success_count = sum(1 for r in context.results if r.status == StepStatus.SUCCESS)
         logger.info(f"Pipeline completed with {success_count}/{len(context.results)} successful steps")
