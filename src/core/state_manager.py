@@ -26,19 +26,29 @@ class StateManager:
     - 状态验证
     """
 
-    def __init__(self, state_path: Path, backup_dir: Optional[Path] = None):
+    def __init__(self, state_path: Path, backup_dir: Optional[Path] = None, in_memory: bool = True):
         """
         Args:
-            state_path: 状态文件路径
+            state_path: 状态文件路径（仅用于备份）
             backup_dir: 备份目录路径（可选）
+            in_memory: 是否使用内存模式（不持久化状态，默认True）
         """
         self._state_path = Path(state_path)
         self._backup_dir = Path(backup_dir) if backup_dir else self._state_path.parent / "backups"
         self._lock = asyncio.Lock()
-        self._state = self._load_state()
+        self._in_memory = in_memory
+
+        # 内存模式：每次启动都是全新状态
+        if in_memory:
+            logger.info("StateManager running in memory mode (no persistence)")
+            self._state = self._get_default_state()
+        else:
+            logger.info("StateManager running in persistent mode")
+            self._state = self._load_state()
+
         self._dirty = False  # 标记是否有未保存的更改
 
-        # 确保备份目录存在
+        # 确保备份目录存在（用于手动备份）
         self._backup_dir.mkdir(parents=True, exist_ok=True)
 
     def _load_state(self) -> dict:
@@ -98,6 +108,12 @@ class StateManager:
     async def save_state(self):
         """异步保存状态"""
         async with self._lock:
+            # 内存模式：不保存到文件
+            if self._in_memory:
+                logger.debug("In-memory mode: state not persisted")
+                self._dirty = False
+                return
+
             if not self._dirty:
                 return
 
