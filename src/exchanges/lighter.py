@@ -327,9 +327,28 @@ class LighterClient:
         logger.info(f"  BaseAmount (integer): {base_amount}")
         logger.info(f"  Price: ${price:.2f}, Price int: {price_int}")
 
-        # Check minimum order size
+        # Calculate order value in USD
+        order_value_usd = size * price
+        logger.info(f"  Order value: ${order_value_usd:.2f}")
+
+        # Check minimum order size (BaseAmount must be >= 1)
         if base_amount < 1:
             raise ValueError(f"Order size too small: {size:.8f} {symbol} (BaseAmount={base_amount}, minimum is 1)")
+
+        # Check minimum order value (Lighter typically requires $50+ per order)
+        MIN_ORDER_VALUE_USD = {
+            "BTC": 100.0,   # $100 minimum for BTC
+            "ETH": 50.0,    # $50 minimum for ETH
+            "SOL": 50.0,    # $50 minimum for SOL
+            "1000BONK": 50.0  # $50 minimum
+        }
+
+        min_value = MIN_ORDER_VALUE_USD.get(symbol, 50.0)
+        if order_value_usd < min_value:
+            raise ValueError(
+                f"Order value too small: ${order_value_usd:.2f} < ${min_value:.2f} minimum for {symbol}. "
+                f"Order will be rejected by exchange. Consider increasing close_ratio or waiting for larger offset."
+            )
 
         # Generate client order ID
         client_order_index = int(time.time() * 1000) % 1000000
