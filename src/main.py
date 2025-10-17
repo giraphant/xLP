@@ -8,7 +8,7 @@ import asyncio
 import signal
 import sys
 from datetime import datetime
-from HedgeEngine import HedgeEngine
+from hedge_engine import HedgeEngine
 
 
 class HedgeBot:
