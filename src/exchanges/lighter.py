@@ -204,6 +204,7 @@ class LighterClient:
         try:
             # Get numeric market ID
             market_id = await self.get_market_id(symbol)
+            logger.debug(f"[get_position] Looking for {symbol} with market_id={market_id}")
 
             # Get account data using AccountApi
             # Query by account index
@@ -212,10 +213,14 @@ class LighterClient:
                 value=str(self.account_index)
             )
 
+            logger.debug(f"[get_position] Account data: {account}")
+
             # Account response includes positions array
             # Each position has: market_id, position, avg_entry_price, unrealized_pnl, etc.
             if account and hasattr(account, 'positions'):
+                logger.debug(f"[get_position] Found {len(account.positions)} positions")
                 for position in account.positions:
+                    logger.debug(f"[get_position] Position: market_id={position.market_id}, position={position.position}")
                     if position.market_id == market_id:
                         # Position is in Lighter's integer format, need to convert
                         market_info = await self.get_market_info(symbol)
@@ -224,7 +229,12 @@ class LighterClient:
                         # Convert for 1000X markets (e.g., 1000BONK)
                         pos = self._convert_1000x_size(symbol, pos, to_lighter=False)
 
+                        logger.info(f"[get_position] {symbol}: raw_position={position.position}, converted={pos}")
                         return pos
+
+                logger.warning(f"[get_position] No position found for {symbol} (market_id={market_id})")
+            else:
+                logger.warning(f"[get_position] Account has no positions attribute")
 
             return 0.0
 
