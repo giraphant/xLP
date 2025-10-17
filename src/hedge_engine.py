@@ -50,6 +50,7 @@ from core.pipeline import (
 )
 from core.decision_engine import DecisionEngine, TradingAction, ActionType
 from core.action_executor import ActionExecutor, ExecutionResult
+from pools import jlp, alp
 
 logger = logging.getLogger(__name__)
 
