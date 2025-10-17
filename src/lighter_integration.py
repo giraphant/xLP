@@ -77,14 +77,28 @@ class LighterClient:
             if self.client is None:
                 await self.initialize()
 
-            # Get market data from Lighter
-            market = await self.client.get_market(market_id)
-            self.market_info[market_id] = {
-                "size_decimals": market.supported_size_decimals,
-                "price_decimals": market.supported_price_decimals,
-                "base_multiplier": 10 ** market.supported_size_decimals,
-                "price_multiplier": 10 ** market.supported_price_decimals,
-            }
+            # Get market metadata from order_api
+            markets = await self.client.order_api.order_books()
+
+            for market in markets:
+                if market.market_id == market_id:
+                    self.market_info[market_id] = {
+                        "size_decimals": market.size_decimals,
+                        "price_decimals": market.price_decimals,
+                        "base_multiplier": 10 ** market.size_decimals,
+                        "price_multiplier": 10 ** market.price_decimals,
+                    }
+                    break
+
+            # If not found, use defaults
+            if market_id not in self.market_info:
+                logger.warning(f"Market {market_id} not found, using default decimals")
+                self.market_info[market_id] = {
+                    "size_decimals": 9,
+                    "price_decimals": 6,
+                    "base_multiplier": 10 ** 9,
+                    "price_multiplier": 10 ** 6,
+                }
 
         return self.market_info[market_id]
 
@@ -102,11 +116,17 @@ class LighterClient:
             await self.initialize()
 
         try:
-            positions = await self.client.get_account_positions()
+            # Get account positions using account_api
+            positions = await self.client.account_api.account_positions(
+                auth_token=await self.client.create_auth_token()
+            )
 
-            for position in positions:
-                if position.market_id == market_id:
-                    return float(position.position)
+            if positions and hasattr(positions, 'positions'):
+                for position in positions.positions:
+                    if position.market_id == market_id:
+                        # Position is in Lighter's integer format, need to convert
+                        market_info = await self.get_market_info(market_id)
+                        return float(position.position) / market_info["base_multiplier"]
 
             return 0.0
 
@@ -128,14 +148,28 @@ class LighterClient:
             await self.initialize()
 
         try:
-            # Get order book
-            orderbook = await self.client.get_orderbook(market_id)
+            # Get order book using order_api
+            orderbook = await self.client.order_api.order_book_orders(
+                market_id=market_id,
+                limit=1  # Only need best bid/ask
+            )
 
-            if orderbook.bids and orderbook.asks:
-                best_bid = float(orderbook.bids[0].price)
-                best_ask = float(orderbook.asks[0].price)
-                return (best_bid + best_ask) / 2
+            if orderbook and hasattr(orderbook, 'bids') and hasattr(orderbook, 'asks'):
+                if orderbook.bids and orderbook.asks:
+                    best_bid = float(orderbook.bids[0]['price'])
+                    best_ask = float(orderbook.asks[0]['price'])
+                    return (best_bid + best_ask) / 2
 
+            # Fallback: try to get from recent trades
+            trades = await self.client.order_api.recent_trades(
+                market_id=market_id,
+                limit=1
+            )
+
+            if trades and len(trades) > 0:
+                return float(trades[0]['price'])
+
+            logger.warning(f"No price data available for {market_id}")
             return 0.0
 
         except Exception as e:
@@ -282,17 +316,39 @@ class LighterClient:
             await self.initialize()
 
         try:
-            order = await self.client.get_order(
-                market_index=market_id,
-                order_id=int(order_id)
+            # Get active orders for the account
+            auth_token = await self.client.create_auth_token()
+            active_orders = await self.client.order_api.account_active_orders(
+                auth_token=auth_token,
+                market_id=market_id
             )
 
-            if order:
-                return {
-                    "status": "open" if order.is_active else "filled",
-                    "filled_size": float(order.filled_size or 0),
-                    "remaining_size": float(order.remaining_size or 0),
-                }
+            # Check if our order is in active orders
+            if active_orders:
+                for order in active_orders:
+                    if str(order.order_id) == str(order_id):
+                        market_info = await self.get_market_info(market_id)
+                        return {
+                            "status": "open",
+                            "filled_size": float(order.filled_size or 0) / market_info["base_multiplier"],
+                            "remaining_size": float(order.size - (order.filled_size or 0)) / market_info["base_multiplier"],
+                        }
+
+            # Not in active orders, check inactive orders (filled/canceled)
+            inactive_orders = await self.client.order_api.account_inactive_orders(
+                auth_token=auth_token,
+                market_id=market_id,
+                limit=20  # Check recent inactive orders
+            )
+
+            if inactive_orders:
+                for order in inactive_orders:
+                    if str(order.order_id) == str(order_id):
+                        return {
+                            "status": "filled" if order.is_filled else "canceled",
+                            "filled_size": float(order.filled_size or 0) / market_info["base_multiplier"],
+                            "remaining_size": 0.0,
+                        }
 
             return {
                 "status": "not_found",
