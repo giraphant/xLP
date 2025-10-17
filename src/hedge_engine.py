@@ -7,6 +7,7 @@
 import json
 import os
 import asyncio
+import logging
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Tuple
 from pathlib import Path
@@ -15,7 +16,24 @@ from pathlib import Path
 from exchanges.interface import create_exchange
 from notifications.pushover import Notifier
 from core.offset_tracker import calculate_offset_and_cost
+from core.state_manager import StateManager
+from core.circuit_breaker import CircuitBreaker, CircuitBreakerManager
+from core.exceptions import (
+    HedgeEngineError,
+    ChainReadError,
+    ExchangeError,
+    OrderPlacementError,
+    OrderCancellationError,
+    InvalidConfigError,
+    MissingConfigError,
+    CalculationError,
+    classify_exception,
+    should_retry,
+    get_retry_delay
+)
 from pools import jlp, alp
+
+logger = logging.getLogger(__name__)
 
 
 class HedgeEngine:
@@ -23,9 +41,20 @@ class HedgeEngine:
         self.config_path = Path(config_path)
         self.state_path = Path(state_path)
 
+        # 加载并验证配置
         self.config = self._load_config()
-        self.state = self._load_state()
+        self._validate_config()
 
+        # 初始化状态管理器
+        self.state_manager = StateManager(
+            state_path=self.state_path,
+            backup_dir=Path("data/backups")
+        )
+
+        # 初始化熔断器管理器
+        self.circuit_manager = CircuitBreakerManager()
+
+        # 初始化交易所和通知器
         self.exchange = create_exchange(self.config["exchange"])
         self.notifier = Notifier(self.config["pushover"])
 
@@ -84,34 +113,36 @@ class HedgeEngine:
 
         return config
 
-    def _load_state(self) -> dict:
-        """加载状态文件，如果不存在则创建"""
-        if not self.state_path.exists():
-            # 使用模板初始化
-            template_path = Path("state_template.json")
-            if template_path.exists():
-                with open(template_path, 'r', encoding='utf-8') as f:
-                    state = json.load(f)
-            else:
-                state = {"symbols": {}, "last_check": None}
+    def _validate_config(self):
+        """验证配置完整性和合理性"""
+        required_fields = ['jlp_amount', 'alp_amount', 'exchange', 'threshold_min_usd', 'threshold_max_usd']
 
-            self._save_state(state)
-            return state
+        # 检查必要字段
+        for field in required_fields:
+            if field not in self.config:
+                raise MissingConfigError(field)
 
-        with open(self.state_path, 'r', encoding='utf-8') as f:
-            return json.load(f)
+        # 验证阈值关系
+        if self.config['threshold_min_usd'] >= self.config['threshold_max_usd']:
+            raise InvalidConfigError(
+                'threshold_min_usd/threshold_max_usd',
+                f"min={self.config['threshold_min_usd']}, max={self.config['threshold_max_usd']}",
+                "threshold_min must be less than threshold_max"
+            )
 
-    def _save_state(self, state: dict = None):
-        """保存状态到文件"""
-        if state is None:
-            state = self.state
+        # 验证close_ratio
+        if not 0 < self.config['close_ratio'] <= 100:
+            raise InvalidConfigError(
+                'close_ratio',
+                self.config['close_ratio'],
+                "must be between 0 and 100"
+            )
 
-        with open(self.state_path, 'w', encoding='utf-8') as f:
-            json.dump(state, f, indent=2, ensure_ascii=False)
+        logger.info("Configuration validated successfully")
 
     async def get_ideal_hedges(self, pool_type: str, amount: float) -> Dict[str, float]:
         """
-        获取理想对冲量
+        获取理想对冲量（带熔断保护）
 
         Args:
             pool_type: "jlp" 或 "alp"
@@ -120,20 +151,37 @@ class HedgeEngine:
         Returns:
             {"SOL": -100.5, "ETH": -5.2, "BTC": -0.5, ...} 负数表示做空
         """
-        if pool_type == "jlp":
-            positions = await jlp.calculate_hedge(amount)
-        elif pool_type == "alp":
-            positions = await alp.calculate_hedge(amount)
-        else:
-            raise ValueError(f"Unknown pool type: {pool_type}")
+        # 获取对应池子的熔断器
+        breaker = await self.circuit_manager.get_or_create(
+            f"pool_{pool_type}",
+            failure_threshold=3,
+            timeout=60
+        )
 
-        # 转换为做空量（负数），并将WBTC重命名为BTC
-        result = {}
-        for symbol, data in positions.items():
-            exchange_symbol = "BTC" if symbol == "WBTC" else symbol
-            result[exchange_symbol] = -data["amount"]
+        try:
+            # 通过熔断器调用池子计算
+            if pool_type == "jlp":
+                positions = await breaker.call(jlp.calculate_hedge, amount)
+            elif pool_type == "alp":
+                positions = await breaker.call(alp.calculate_hedge, amount)
+            else:
+                raise ValueError(f"Unknown pool type: {pool_type}")
 
-        return result
+            # 转换为做空量（负数），并将WBTC重命名为BTC
+            result = {}
+            for symbol, data in positions.items():
+                exchange_symbol = "BTC" if symbol == "WBTC" else symbol
+                result[exchange_symbol] = -data["amount"]
+
+            return result
+
+        except Exception as e:
+            # 包装并重新抛出链读取错误
+            raise ChainReadError(
+                f"{pool_type}_pool",
+                f"Failed to calculate hedge for {pool_type}",
+                e
+            )
 
     def get_zone(self, offset_usd: float) -> Optional[int]:
         """
@@ -202,28 +250,15 @@ class HedgeEngine:
         current_price: float
     ):
         """
-        处理单个币种的对冲逻辑
+        处理单个币种的对冲逻辑（使用新的状态管理器）
 
         Args:
             symbol: 币种符号
             ideal_position: 理想持仓
             current_price: 当前价格
         """
-        # 确保symbol在state中存在，如果不存在则初始化
-        if symbol not in self.state["symbols"]:
-            self.state["symbols"][symbol] = {
-                "offset": 0.0,
-                "cost_basis": 0.0,
-                "last_updated": None,
-                "monitoring": {
-                    "active": False,
-                    "current_zone": None,
-                    "order_id": None,
-                    "started_at": None
-                }
-            }
-
-        state = self.state["symbols"][symbol]
+        # 从状态管理器获取币种状态
+        state = await self.state_manager.get_symbol_state(symbol)
 
         # 从交易所获取实际持仓
         actual_position = await self.exchange.get_position(symbol)
@@ -237,53 +272,57 @@ class HedgeEngine:
             ideal_position, actual_position, current_price, old_offset, old_cost
         )
 
-        # 更新状态
-        state["offset"] = new_offset
-        state["cost_basis"] = new_cost
-        state["last_updated"] = datetime.now().isoformat()
+        # 更新状态到状态管理器
+        await self.state_manager.update_symbol_state(symbol, {
+            "offset": new_offset,
+            "cost_basis": new_cost
+        })
 
         # 计算偏移USD绝对值
         offset_usd = abs(new_offset) * current_price
 
         # 判断区间
         new_zone = self.get_zone(offset_usd)
-        current_zone = state["monitoring"]["current_zone"]
-        is_monitoring = state["monitoring"]["active"]
+        current_zone = state.get("monitoring", {}).get("current_zone")
+        is_monitoring = state.get("monitoring", {}).get("active", False)
 
-        print(f"{symbol}: actual_pos={actual_position:.4f}, ideal_pos={ideal_position:.4f}, offset={new_offset:.4f}, cost=${new_cost:.2f}, zone={new_zone}, offset_usd=${offset_usd:.2f}")
+        logger.info(f"{symbol}: actual_pos={actual_position:.4f}, ideal_pos={ideal_position:.4f}, offset={new_offset:.4f}, cost=${new_cost:.2f}, zone={new_zone}, offset_usd=${offset_usd:.2f}")
 
         # 处理超阈值警报
         if new_zone == -1:
-            print(f"⚠️  [{symbol}] 超过最高阈值！偏移 ${offset_usd:.2f}")
+            logger.warning(f"[{symbol}] 超过最高阈值！偏移 ${offset_usd:.2f}")
 
             # 撤单
-            if state["monitoring"]["order_id"]:
-                await self.exchange.cancel_order(state["monitoring"]["order_id"])
+            if state.get("monitoring", {}).get("order_id"):
+                try:
+                    await self.exchange.cancel_order(state["monitoring"]["order_id"])
+                except OrderCancellationError as e:
+                    logger.error(f"Failed to cancel order: {e}")
 
             # 发送Pushover警报
             await self.notifier.alert_threshold_exceeded(
                 symbol, offset_usd, new_offset, current_price
             )
 
-            state["monitoring"]["active"] = False
-            state["monitoring"]["order_id"] = None
-            self._save_state()
+            # 重置监控状态
+            await self.state_manager.reset_symbol_monitoring(symbol)
+            await self.state_manager.save_state()
             return
 
         # 处理区间变化
         if new_zone != current_zone:
             # 区间变化，需要撤单重挂
-            if is_monitoring and state["monitoring"]["order_id"]:
-                print(f"  → 区间变化 {current_zone} → {new_zone}，撤销旧单")
-                await self.exchange.cancel_order(state["monitoring"]["order_id"])
+            if is_monitoring and state.get("monitoring", {}).get("order_id"):
+                logger.info(f"区间变化 {current_zone} → {new_zone}，撤销旧单")
+                try:
+                    await self.exchange.cancel_order(state["monitoring"]["order_id"])
+                except OrderCancellationError as e:
+                    logger.error(f"Failed to cancel order: {e}")
 
             if new_zone is None:
                 # 回到阈值内，停止监控
-                print(f"  → 偏移回到阈值内，停止监控")
-                state["monitoring"]["active"] = False
-                state["monitoring"]["current_zone"] = None
-                state["monitoring"]["order_id"] = None
-                state["monitoring"]["started_at"] = None
+                logger.info(f"偏移回到阈值内，停止监控")
+                await self.state_manager.reset_symbol_monitoring(symbol)
             else:
                 # 新区间，重新挂单
                 order_price = self.calculate_order_price(
@@ -292,76 +331,165 @@ class HedgeEngine:
                 order_size = self._calculate_close_size(new_offset)
                 side = "sell" if new_offset > 0 else "buy"
 
-                print(f"  → 进入区间 {new_zone}，挂单: {side} {order_size:.4f} @ ${order_price:.2f}")
+                logger.info(f"进入区间 {new_zone}，挂单: {side} {order_size:.4f} @ ${order_price:.2f}")
 
-                # 下单
-                order_id = await self.exchange.place_limit_order(
-                    symbol, side, order_size, order_price
-                )
+                try:
+                    # 通过熔断器下单
+                    exchange_breaker = await self.circuit_manager.get_or_create(
+                        f"exchange_{symbol}",
+                        failure_threshold=3,
+                        timeout=30
+                    )
 
-                state["monitoring"]["active"] = True
-                state["monitoring"]["current_zone"] = new_zone
-                state["monitoring"]["order_id"] = order_id
-                state["monitoring"]["started_at"] = datetime.now().isoformat()
+                    order_id = await exchange_breaker.call(
+                        self.exchange.place_limit_order,
+                        symbol, side, order_size, order_price
+                    )
+
+                    # 更新监控状态
+                    await self.state_manager.update_symbol_state(symbol, {
+                        "monitoring": {
+                            "active": True,
+                            "current_zone": new_zone,
+                            "order_id": order_id,
+                            "started_at": datetime.now().isoformat()
+                        }
+                    })
+
+                    # 增加订单计数
+                    await self.state_manager.increment_counter(symbol, "stats.total_orders")
+
+                except OrderPlacementError as e:
+                    logger.error(f"Failed to place order: {e}")
+                    await self.notifier.alert_order_failed(symbol, side, order_size, str(e))
 
         # 检查超时
-        if is_monitoring and state["monitoring"]["started_at"]:
+        if is_monitoring and state.get("monitoring", {}).get("started_at"):
             started_at = datetime.fromisoformat(state["monitoring"]["started_at"])
             elapsed = (datetime.now() - started_at).total_seconds() / 60
             timeout = self.config["timeout_minutes"]
 
             if elapsed >= timeout:
-                print(f"  → 超时 {elapsed:.1f}分钟，强制市价平仓")
+                logger.warning(f"超时 {elapsed:.1f}分钟，强制市价平仓")
 
                 # 撤单
-                if state["monitoring"]["order_id"]:
-                    await self.exchange.cancel_order(state["monitoring"]["order_id"])
+                if state.get("monitoring", {}).get("order_id"):
+                    try:
+                        await self.exchange.cancel_order(state["monitoring"]["order_id"])
+                    except OrderCancellationError as e:
+                        logger.error(f"Failed to cancel order: {e}")
 
                 # 市价平仓
                 order_size = self._calculate_close_size(new_offset)
                 side = "sell" if new_offset > 0 else "buy"
 
-                await self.exchange.place_market_order(symbol, side, order_size)
-                await self.notifier.alert_force_close(symbol, order_size, side)
+                try:
+                    # 通过熔断器执行市价单
+                    exchange_breaker = await self.circuit_manager.get_or_create(
+                        f"exchange_{symbol}",
+                        failure_threshold=3,
+                        timeout=30
+                    )
 
-                state["monitoring"]["active"] = False
-                state["monitoring"]["order_id"] = None
+                    await exchange_breaker.call(
+                        self.exchange.place_market_order,
+                        symbol, side, order_size
+                    )
 
-        self._save_state()
+                    await self.notifier.alert_force_close(symbol, order_size, side)
+
+                    # 更新统计
+                    await self.state_manager.increment_counter(symbol, "stats.forced_closes")
+
+                except OrderPlacementError as e:
+                    logger.error(f"Failed to place market order: {e}")
+                    # 市价单失败是严重问题，需要通知
+                    await self.notifier.alert_critical_error(
+                        f"Market order failed for {symbol}",
+                        str(e)
+                    )
+
+                # 重置监控状态
+                await self.state_manager.reset_symbol_monitoring(symbol)
+
+        # 保存状态
+        await self.state_manager.save_state()
 
     async def run_once(self):
-        """执行一次检查循环"""
-        print(f"\n{'='*60}")
-        print(f"检查时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        print(f"{'='*60}")
+        """执行一次检查循环（带错误处理）"""
+        logger.info(f"{'='*60}")
+        logger.info(f"检查时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info(f"{'='*60}")
 
-        # 1. 获取JLP和ALP的理想对冲量
-        jlp_hedges = await self.get_ideal_hedges("jlp", self.config["jlp_amount"])
-        alp_hedges = await self.get_ideal_hedges("alp", self.config["alp_amount"])
+        try:
+            # 1. 获取JLP和ALP的理想对冲量
+            jlp_hedges = await self.get_ideal_hedges("jlp", self.config["jlp_amount"])
+            alp_hedges = await self.get_ideal_hedges("alp", self.config["alp_amount"])
 
-        # 2. 合并对冲量（按币种）
-        all_symbols = set(jlp_hedges.keys()) | set(alp_hedges.keys())
-        merged_hedges = {}
-        for symbol in all_symbols:
-            jlp_amount = jlp_hedges.get(symbol, 0.0)
-            alp_amount = alp_hedges.get(symbol, 0.0)
-            merged_hedges[symbol] = jlp_amount + alp_amount
+            # 2. 合并对冲量（按币种）
+            all_symbols = set(jlp_hedges.keys()) | set(alp_hedges.keys())
+            merged_hedges = {}
+            for symbol in all_symbols:
+                jlp_amount = jlp_hedges.get(symbol, 0.0)
+                alp_amount = alp_hedges.get(symbol, 0.0)
+                merged_hedges[symbol] = jlp_amount + alp_amount
 
-        # 3. 获取所有需要的价格
-        prices = {}
-        for symbol in merged_hedges.keys():
-            price = await self.exchange.get_price(symbol)
-            prices[symbol] = price
+            # 3. 获取所有需要的价格（通过熔断器）
+            prices = {}
+            for symbol in merged_hedges.keys():
+                price_breaker = await self.circuit_manager.get_or_create(
+                    f"price_{symbol}",
+                    failure_threshold=5,
+                    timeout=30
+                )
+                try:
+                    price = await price_breaker.call(self.exchange.get_price, symbol)
+                    prices[symbol] = price
+                except Exception as e:
+                    logger.error(f"Failed to get price for {symbol}: {e}")
+                    # 使用上次的价格或跳过
+                    continue
 
-        print()
+            # 4. 统一处理每个币种
+            for symbol, ideal_pos in merged_hedges.items():
+                if symbol not in prices:
+                    logger.warning(f"Skipping {symbol} due to missing price")
+                    continue
 
-        # 4. 统一处理每个币种
-        for symbol, ideal_pos in merged_hedges.items():
-            current_price = prices[symbol]
-            await self.process_symbol(symbol, ideal_pos, current_price)
+                current_price = prices[symbol]
 
-        self.state["last_check"] = datetime.now().isoformat()
-        self._save_state()
+                try:
+                    await self.process_symbol(symbol, ideal_pos, current_price)
+                except HedgeEngineError as e:
+                    logger.error(f"Failed to process {symbol}: {e}")
+                    if e.should_notify:
+                        await self.notifier.alert_error(symbol, str(e))
+                except Exception as e:
+                    logger.error(f"Unexpected error processing {symbol}: {e}")
+
+            # 更新元数据
+            await self.state_manager.update_metadata({
+                "last_check": datetime.now().isoformat(),
+                "total_runs": (await self.state_manager.get_metadata()).get("total_runs", 0) + 1
+            })
+
+            # 清理超时的订单监控
+            await self.state_manager.cleanup_stale_orders()
+
+            # 最终保存状态
+            await self.state_manager.save_state()
+
+            # 清理空闲的熔断器
+            self.circuit_manager.cleanup_idle()
+
+        except Exception as e:
+            logger.error(f"Error in run_once: {e}")
+            # 记录最后的错误
+            await self.state_manager.update_metadata({
+                "last_error": str(e),
+                "last_error_time": datetime.now().isoformat()
+            })
+            raise
 
 
 async def main():
