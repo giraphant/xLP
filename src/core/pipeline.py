@@ -253,13 +253,25 @@ class FetchPoolDataStep(PipelineStep):
         """获取所有池子数据"""
         pool_data = {}
 
+        logger.info("=" * 50)
+        logger.info("📊 FETCHING POOL DATA")
+        logger.info("=" * 50)
+
         for pool_type, calculator in self.pool_calculators.items():
             amount = context.config.get(f"{pool_type}_amount", 0)
             if amount > 0:
-                logger.info(f"Fetching {pool_type} data for amount {amount}")
-                pool_data[pool_type] = await calculator(amount)
+                logger.info(f"🏊 {pool_type.upper()} Pool: Amount = {amount:,.2f}")
+                positions = await calculator(amount)
+                pool_data[pool_type] = positions
+
+                # 详细显示每个池子的持仓
+                logger.info(f"  └─ Positions in {pool_type.upper()}:")
+                for symbol, data in positions.items():
+                    amount_value = data["amount"] if isinstance(data, dict) else data
+                    logger.info(f"     • {symbol}: {amount_value:,.4f}")
 
         context.pool_data = pool_data
+        logger.info(f"✅ Fetched data from {len(pool_data)} pools")
         return pool_data
 
 
@@ -278,7 +290,13 @@ class CalculateIdealHedgesStep(PipelineStep):
         """合并计算理想对冲量"""
         merged_hedges = {}
 
+        logger.info("=" * 50)
+        logger.info("🎯 CALCULATING IDEAL HEDGES")
+        logger.info("=" * 50)
+
+        # 详细显示每个池子的贡献
         for pool_type, positions in context.pool_data.items():
+            logger.info(f"📈 {pool_type.upper()} Pool Contributions:")
             for symbol, data in positions.items():
                 # 转换符号（WBTC -> BTC）
                 exchange_symbol = "BTC" if symbol == "WBTC" else symbol
@@ -289,10 +307,18 @@ class CalculateIdealHedgesStep(PipelineStep):
 
                 # 从data中提取amount（根据实际数据结构）
                 amount = data["amount"] if isinstance(data, dict) else data
-                merged_hedges[exchange_symbol] += -amount  # 负数表示做空
+                hedge_amount = -amount  # 负数表示做空
+                merged_hedges[exchange_symbol] += hedge_amount
+
+                logger.info(f"  • {symbol} → {exchange_symbol}: {hedge_amount:+.4f} (short)")
+
+        # 显示最终的合并结果
+        logger.info("📊 MERGED IDEAL POSITIONS (Negative = Short):")
+        for symbol, amount in sorted(merged_hedges.items()):
+            logger.info(f"  💹 {symbol}: {amount:+.4f}")
 
         context.ideal_hedges = merged_hedges
-        logger.info(f"Calculated ideal hedges for {len(merged_hedges)} symbols")
+        logger.info(f"✅ Calculated hedges for {len(merged_hedges)} symbols")
         return merged_hedges
 
 
@@ -311,6 +337,10 @@ class FetchMarketDataStep(PipelineStep):
     async def _run(self, context: PipelineContext) -> Dict[str, Any]:
         """并发获取价格和持仓"""
         symbols = list(context.ideal_hedges.keys())
+
+        logger.info("=" * 50)
+        logger.info("💹 FETCHING MARKET DATA")
+        logger.info("=" * 50)
 
         # 并发获取价格
         price_tasks = {
@@ -332,25 +362,35 @@ class FetchMarketDataStep(PipelineStep):
         prices = {}
         positions = {}
 
+        logger.info("📈 CURRENT PRICES:")
         for symbol, price in zip(price_tasks.keys(), prices_results):
             if isinstance(price, Exception):
-                logger.error(f"Failed to get price for {symbol}: {price}")
+                logger.error(f"  ❌ {symbol}: Failed to get price - {price}")
             else:
                 prices[symbol] = price
+                logger.info(f"  💵 {symbol}: ${price:,.2f}")
 
+        logger.info("📊 ACTUAL POSITIONS (Exchange + Initial Offset):")
         for symbol, position in zip(position_tasks.keys(), positions_results):
             if isinstance(position, Exception):
-                logger.error(f"Failed to get position for {symbol}: {position}")
+                logger.error(f"  ❌ {symbol}: Failed to get position - {position}")
                 positions[symbol] = 0.0  # 默认为0
             else:
                 # 加上初始偏移量
                 initial_offset = context.config.get("initial_offset", {}).get(symbol, 0.0)
-                positions[symbol] = position + initial_offset
+                total_position = position + initial_offset
+                positions[symbol] = total_position
+
+                if initial_offset != 0:
+                    logger.info(f"  📍 {symbol}: {total_position:+.4f} "
+                               f"(Exchange: {position:+.4f}, Initial: {initial_offset:+.4f})")
+                else:
+                    logger.info(f"  📍 {symbol}: {total_position:+.4f}")
 
         context.prices = prices
         context.actual_positions = positions
 
-        logger.info(f"Fetched market data for {len(prices)} symbols")
+        logger.info(f"✅ Fetched market data for {len(prices)} symbols")
         return {"prices": prices, "positions": positions}
 
 
@@ -371,9 +411,13 @@ class CalculateOffsetsStep(PipelineStep):
         """计算所有币种的偏移量和成本基础"""
         offsets = {}
 
+        logger.info("=" * 50)
+        logger.info("🔍 CALCULATING OFFSETS AND COST BASIS")
+        logger.info("=" * 50)
+
         for symbol in context.ideal_hedges.keys():
             if symbol not in context.prices:
-                logger.warning(f"Skipping {symbol} due to missing price")
+                logger.warning(f"⚠️ Skipping {symbol} due to missing price")
                 continue
 
             # 获取历史状态
@@ -392,6 +436,24 @@ class CalculateOffsetsStep(PipelineStep):
 
             offsets[symbol] = (new_offset, new_cost)
 
+            # 计算USD价值
+            offset_usd = abs(new_offset) * current_price
+
+            # 详细日志输出
+            logger.info(f"📊 {symbol}:")
+            logger.info(f"  ├─ Ideal Position: {ideal_pos:+.4f}")
+            logger.info(f"  ├─ Actual Position: {actual_pos:+.4f}")
+            logger.info(f"  ├─ Offset: {new_offset:+.4f} ({offset_usd:.2f} USD)")
+            logger.info(f"  ├─ Cost Basis: ${new_cost:.2f} (Previous: ${old_cost:.2f})")
+
+            # 显示偏移方向
+            if new_offset > 0:
+                logger.info(f"  └─ Status: 🔴 LONG exposure (Need to SELL {abs(new_offset):.4f})")
+            elif new_offset < 0:
+                logger.info(f"  └─ Status: 🟢 SHORT exposure (Need to BUY {abs(new_offset):.4f})")
+            else:
+                logger.info(f"  └─ Status: ✅ BALANCED")
+
             # 更新状态
             await self.state_manager.update_symbol_state(symbol, {
                 "offset": new_offset,
@@ -399,7 +461,7 @@ class CalculateOffsetsStep(PipelineStep):
             })
 
         context.offsets = offsets
-        logger.info(f"Calculated offsets for {len(offsets)} symbols")
+        logger.info(f"✅ Calculated offsets for {len(offsets)} symbols")
         return offsets
 
 
@@ -417,12 +479,22 @@ class DecideActionsStep(PipelineStep):
 
     async def _run(self, context: PipelineContext) -> List[Any]:
         """根据市场数据决定操作"""
+        logger.info("=" * 50)
+        logger.info("🤔 DECISION ENGINE - EVALUATING ACTIONS")
+        logger.info("=" * 50)
+
         # 准备决策数据
         market_data = {}
 
+        # 显示阈值配置
+        threshold_min = self.decision_engine.threshold_min_usd
+        threshold_max = self.decision_engine.threshold_max_usd
+        threshold_step = self.decision_engine.threshold_step_usd
+        logger.info(f"⚡ Thresholds: ${threshold_min:.2f} - ${threshold_max:.2f} (Step: ${threshold_step:.2f})")
+
         for symbol, (offset, cost_basis) in context.offsets.items():
             if symbol not in context.prices:
-                logger.warning(f"Skipping {symbol} - no price data")
+                logger.warning(f"⚠️ Skipping {symbol} - no price data")
                 continue
 
             current_price = context.prices[symbol]
@@ -435,11 +507,39 @@ class DecideActionsStep(PipelineStep):
                 "offset_usd": offset_usd
             }
 
+            # 显示币种评估
+            zone = self.decision_engine.get_zone(offset_usd)
+            logger.info(f"🎯 {symbol}: Offset ${offset_usd:.2f} → Zone {zone}")
+
         # 批量决策
         actions = await self.decision_engine.batch_decide(market_data)
 
+        # 显示决策结果
+        logger.info("📋 DECISIONS:")
+        action_counts = {}
+        for action in actions:
+            action_type = action.type.value
+            action_counts[action_type] = action_counts.get(action_type, 0) + 1
+
+            # 根据不同操作类型显示详细信息
+            if action.type.value == "place_limit_order":
+                logger.info(f"  📝 {action.symbol}: PLACE LIMIT {action.side.upper()} "
+                           f"{action.size:.4f} @ ${action.price:.2f} - {action.reason}")
+            elif action.type.value == "place_market_order":
+                logger.info(f"  🚨 {action.symbol}: PLACE MARKET {action.side.upper()} "
+                           f"{action.size:.4f} - {action.reason}")
+            elif action.type.value == "cancel_order":
+                logger.info(f"  ❌ {action.symbol}: CANCEL ORDER {action.order_id} - {action.reason}")
+            elif action.type.value == "alert":
+                logger.info(f"  ⚠️ {action.symbol}: ALERT - {action.reason}")
+            elif action.type.value == "no_action":
+                logger.debug(f"  ✅ {action.symbol}: NO ACTION - {action.reason}")
+
+        # 显示汇总
+        logger.info(f"📊 Summary: {action_counts}")
+
         context.actions = actions
-        logger.info(f"Decided on {len(actions)} actions")
+        logger.info(f"✅ Decided on {len(actions)} actions")
         return actions
 
 
@@ -458,8 +558,14 @@ class ExecuteActionsStep(PipelineStep):
     async def _run(self, context: PipelineContext) -> List[Any]:
         """执行所有决定的操作"""
         if not context.actions:
-            logger.info("No actions to execute")
+            logger.info("✅ No actions to execute")
             return []
+
+        logger.info("=" * 50)
+        logger.info("⚡ EXECUTING ACTIONS")
+        logger.info("=" * 50)
+
+        logger.info(f"🎯 Executing {len(context.actions)} actions...")
 
         # 使用执行器批量执行
         # 注意：这里使用串行执行以避免竞态条件
@@ -468,17 +574,53 @@ class ExecuteActionsStep(PipelineStep):
             parallel=False
         )
 
+        # 显示执行结果
+        logger.info("📊 EXECUTION RESULTS:")
+        for i, result in enumerate(results, 1):
+            action = result.action
+            if result.success:
+                if action.type.value == "place_limit_order":
+                    logger.info(f"  ✅ [{i}] {action.symbol}: Limit order placed - "
+                               f"{action.side.upper()} {action.size:.4f} @ ${action.price:.2f} "
+                               f"(Order ID: {result.result})")
+                elif action.type.value == "place_market_order":
+                    logger.info(f"  ✅ [{i}] {action.symbol}: Market order executed - "
+                               f"{action.side.upper()} {action.size:.4f} "
+                               f"(Order ID: {result.result})")
+                elif action.type.value == "cancel_order":
+                    logger.info(f"  ✅ [{i}] {action.symbol}: Order cancelled - ID: {action.order_id}")
+                elif action.type.value == "alert":
+                    logger.info(f"  ✅ [{i}] {action.symbol}: Alert sent - {action.reason}")
+                elif action.type.value == "no_action":
+                    logger.debug(f"  ✅ [{i}] {action.symbol}: No action taken")
+            else:
+                logger.error(f"  ❌ [{i}] {action.symbol}: Failed to {action.type.value} - "
+                            f"Error: {result.error}")
+
         # 统计执行结果
         success_count = sum(1 for r in results if r.success)
         failed_count = len(results) - success_count
 
-        logger.info(f"Executed {len(results)} actions: "
-                   f"{success_count} success, {failed_count} failed")
+        # 显示统计信息
+        stats = self.action_executor.get_stats()
+        logger.info("📈 EXECUTION STATISTICS:")
+        logger.info(f"  • Total Actions: {len(results)}")
+        logger.info(f"  • Successful: {success_count}")
+        logger.info(f"  • Failed: {failed_count}")
+        logger.info(f"  • Success Rate: {stats.get('success_rate', 0)*100:.1f}%")
+
+        # 按类型显示统计
+        if stats.get('by_type'):
+            logger.info("  • By Type:")
+            for action_type, type_stats in stats['by_type'].items():
+                logger.info(f"    - {action_type}: {type_stats['success']} success, "
+                           f"{type_stats['failed']} failed")
 
         # 将结果存入上下文
         context.metadata["execution_results"] = results
-        context.metadata["execution_stats"] = self.action_executor.get_stats()
+        context.metadata["execution_stats"] = stats
 
+        logger.info(f"✅ Execution complete: {success_count}/{len(results)} successful")
         return results
 
 
