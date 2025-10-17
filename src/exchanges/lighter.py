@@ -331,9 +331,28 @@ class LighterClient:
         order_value_usd = size * price
         logger.info(f"  Order value: ${order_value_usd:.2f}")
 
-        # Check minimum order size (BaseAmount must be >= 1)
+        # Check minimum order size
+        # BaseAmount must be >= 1 (API requirement)
         if base_amount < 1:
             raise ValueError(f"Order size too small: {size:.8f} {symbol} (BaseAmount={base_amount}, minimum is 1)")
+
+        # Check L2 minimum order size (discovered through testing)
+        # L2 Sequencer rejects very small orders even if API accepts them
+        # Empirical observation: BaseAmount < ~100 often gets rejected
+        MIN_BASE_AMOUNT = {
+            "BTC": 10,      # BTC has decimals=5, ~0.0001 BTC minimum
+            "ETH": 50,      # ETH has decimals=4, ~0.005 ETH minimum
+            "SOL": 100,     # SOL has decimals=3, ~0.1 SOL minimum
+            "1000BONK": 1000  # 1000BONK has decimals=4
+        }
+
+        min_base = MIN_BASE_AMOUNT.get(symbol, 100)
+        if base_amount < min_base:
+            raise ValueError(
+                f"Order too small for L2: BaseAmount={base_amount} < {min_base} minimum for {symbol}. "
+                f"Size {size:.8f} {symbol} ≈ ${order_value_usd:.2f}. "
+                f"Increase CLOSE_RATIO or wait for larger offset to avoid rejected orders."
+            )
 
         # Generate client order ID
         client_order_index = int(time.time() * 1000) % 1000000
