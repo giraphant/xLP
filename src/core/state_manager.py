@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
 """
-状态管理器 - 集中管理所有状态操作
-确保状态更新的原子性和一致性
+内存状态管理器 - 运行时状态跟踪
+纯内存模式，不持久化状态，每次重启全新评估
 """
 
 import json
 import asyncio
-import shutil
-from pathlib import Path
 from datetime import datetime
-from typing import Dict, Optional, Any
+from typing import Dict
 import logging
 
 logger = logging.getLogger(__name__)
@@ -17,62 +15,25 @@ logger = logging.getLogger(__name__)
 
 class StateManager:
     """
-    集中管理所有状态操作，确保原子性和一致性
+    内存状态管理器 - 运行时状态跟踪
 
     特性：
+    - 纯内存模式，不持久化（每次重启全新状态）
     - 线程安全的状态更新
-    - 自动备份机制
     - 事务性批量更新
     - 状态验证
+
+    设计理念：
+    - 简单可靠：无状态污染，每次重启重新评估
+    - 日志驱动：所有操作记录在日志中，便于审计
+    - 实时计算：offset和cost_basis基于当前市场状态
     """
 
-    def __init__(self, state_path: Path, backup_dir: Optional[Path] = None, in_memory: bool = True):
-        """
-        Args:
-            state_path: 状态文件路径（仅用于备份）
-            backup_dir: 备份目录路径（可选）
-            in_memory: 是否使用内存模式（不持久化状态，默认True）
-        """
-        self._state_path = Path(state_path)
-        self._backup_dir = Path(backup_dir) if backup_dir else self._state_path.parent / "backups"
+    def __init__(self):
+        """初始化内存状态管理器"""
         self._lock = asyncio.Lock()
-        self._in_memory = in_memory
-
-        # 内存模式：每次启动都是全新状态
-        if in_memory:
-            logger.info("StateManager running in memory mode (no persistence)")
-            self._state = self._get_default_state()
-        else:
-            logger.info("StateManager running in persistent mode")
-            self._state = self._load_state()
-
-        self._dirty = False  # 标记是否有未保存的更改
-
-        # 确保备份目录存在（用于手动备份）
-        self._backup_dir.mkdir(parents=True, exist_ok=True)
-
-    def _load_state(self) -> dict:
-        """加载状态文件"""
-        if not self._state_path.exists():
-            # 使用模板初始化
-            template_path = Path("state_template.json")
-            if template_path.exists():
-                with open(template_path, 'r', encoding='utf-8') as f:
-                    state = json.load(f)
-            else:
-                state = self._get_default_state()
-
-            # 保存初始状态
-            self._save_state_sync(state)
-            return state
-
-        try:
-            with open(self._state_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse state file: {e}")
-            # 尝试从备份恢复
-            return self._restore_from_backup()
+        self._state = self._get_default_state()
+        logger.info("StateManager initialized (in-memory mode, no persistence)")
 
     def _get_default_state(self) -> dict:
         """获取默认状态结构"""
@@ -87,88 +48,6 @@ class StateManager:
             }
         }
 
-    def _save_state_sync(self, state: dict):
-        """同步保存状态（内部使用）"""
-        # 创建临时文件，避免写入失败导致数据丢失
-        temp_path = self._state_path.with_suffix('.tmp')
-
-        try:
-            with open(temp_path, 'w', encoding='utf-8') as f:
-                json.dump(state, f, indent=2, ensure_ascii=False)
-
-            # 原子性替换
-            temp_path.replace(self._state_path)
-
-        except Exception as e:
-            logger.error(f"Failed to save state: {e}")
-            if temp_path.exists():
-                temp_path.unlink()
-            raise
-
-    async def save_state(self):
-        """异步保存状态"""
-        async with self._lock:
-            # 内存模式：不保存到文件
-            if self._in_memory:
-                logger.debug("In-memory mode: state not persisted")
-                self._dirty = False
-                return
-
-            if not self._dirty:
-                return
-
-            self._save_state_sync(self._state)
-            self._dirty = False
-            logger.debug("State saved successfully")
-
-    async def create_backup(self, tag: str = None) -> Path:
-        """创建状态备份"""
-        async with self._lock:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            tag_suffix = f"_{tag}" if tag else ""
-            backup_path = self._backup_dir / f"state_{timestamp}{tag_suffix}.json"
-
-            try:
-                shutil.copy2(self._state_path, backup_path)
-                logger.info(f"Created backup: {backup_path}")
-
-                # 清理旧备份（保留最近10个）
-                await self._cleanup_old_backups()
-
-                return backup_path
-            except Exception as e:
-                logger.error(f"Failed to create backup: {e}")
-                raise
-
-    async def _cleanup_old_backups(self, keep_count: int = 10):
-        """清理旧的备份文件"""
-        backups = sorted(self._backup_dir.glob("state_*.json"), key=lambda p: p.stat().st_mtime)
-
-        if len(backups) > keep_count:
-            for backup in backups[:-keep_count]:
-                try:
-                    backup.unlink()
-                    logger.debug(f"Deleted old backup: {backup}")
-                except Exception as e:
-                    logger.warning(f"Failed to delete backup {backup}: {e}")
-
-    def _restore_from_backup(self) -> dict:
-        """从备份恢复状态"""
-        backups = sorted(self._backup_dir.glob("state_*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
-
-        for backup in backups[:3]:  # 尝试最新的3个备份
-            try:
-                with open(backup, 'r', encoding='utf-8') as f:
-                    state = json.load(f)
-                logger.info(f"Restored state from backup: {backup}")
-                return state
-            except Exception as e:
-                logger.warning(f"Failed to restore from {backup}: {e}")
-                continue
-
-        # 所有备份都失败，返回默认状态
-        logger.warning("All backups failed, using default state")
-        return self._get_default_state()
 
     async def get_symbol_state(self, symbol: str) -> dict:
         """获取单个币种状态"""
@@ -223,8 +102,6 @@ class StateManager:
 
             # 更新时间戳
             self._state["symbols"][symbol]["last_updated"] = datetime.now().isoformat()
-
-            self._dirty = True
             logger.debug(f"Updated state for {symbol}: {updates}")
 
     async def batch_update(self, updates: Dict[str, dict], transaction: bool = True):
@@ -300,7 +177,6 @@ class StateManager:
                 self._state["metadata"] = {}
 
             self._deep_merge(self._state["metadata"], updates)
-            self._dirty = True
 
     async def increment_counter(self, symbol: str, counter_path: str, amount: int = 1):
         """
@@ -330,8 +206,6 @@ class StateManager:
             field = parts[-1]
             target[field] = target.get(field, 0) + amount
 
-            self._dirty = True
-
     async def reset_symbol_monitoring(self, symbol: str):
         """重置币种的监控状态"""
         await self.update_symbol_state(symbol, {
@@ -357,13 +231,3 @@ class StateManager:
                     if elapsed > timeout_minutes:
                         logger.warning(f"Cleaning stale order monitoring for {symbol}")
                         await self.reset_symbol_monitoring(symbol)
-
-    @property
-    def state_path(self) -> Path:
-        """获取状态文件路径"""
-        return self._state_path
-
-    @property
-    def is_dirty(self) -> bool:
-        """是否有未保存的更改"""
-        return self._dirty

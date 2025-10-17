@@ -173,12 +173,6 @@ class HedgeBot:
 
         if self.engine:
             try:
-                # 保存最终状态
-                await self.engine.state_manager.save_state()
-
-                # 创建关闭前的备份
-                await self.engine.state_manager.create_backup("shutdown")
-
                 # 导出最终指标
                 try:
                     # 导出指标摘要
