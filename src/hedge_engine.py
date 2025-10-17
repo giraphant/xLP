@@ -50,7 +50,6 @@ from core.pipeline import (
 )
 from core.decision_engine import DecisionEngine, TradingAction, ActionType
 from core.action_executor import ActionExecutor, ExecutionResult
-from pools import jlp, alp
 
 logger = logging.getLogger(__name__)
 
@@ -200,304 +199,13 @@ class HedgeEngine:
 
         logger.info("Configuration validated successfully")
 
-    async def get_ideal_hedges(self, pool_type: str, amount: float) -> Dict[str, float]:
-        """
-        获取理想对冲量（带熔断保护）
-
-        Args:
-            pool_type: "jlp" 或 "alp"
-            amount: JLP或ALP数量
-
-        Returns:
-            {"SOL": -100.5, "ETH": -5.2, "BTC": -0.5, ...} 负数表示做空
-        """
-        # 获取对应池子的熔断器
-        breaker = await self.circuit_manager.get_or_create(
-            f"pool_{pool_type}",
-            failure_threshold=3,
-            timeout=60
-        )
-
-        try:
-            # 通过熔断器调用池子计算
-            if pool_type == "jlp":
-                positions = await breaker.call(jlp.calculate_hedge, amount)
-            elif pool_type == "alp":
-                positions = await breaker.call(alp.calculate_hedge, amount)
-            else:
-                raise ValueError(f"Unknown pool type: {pool_type}")
-
-            # 转换为做空量（负数），并将WBTC重命名为BTC
-            result = {}
-            for symbol, data in positions.items():
-                exchange_symbol = "BTC" if symbol == "WBTC" else symbol
-                result[exchange_symbol] = -data["amount"]
-
-            return result
-
-        except Exception as e:
-            # 包装并重新抛出链读取错误
-            raise ChainReadError(
-                f"{pool_type}_pool",
-                f"Failed to calculate hedge for {pool_type}",
-                e
-            )
-
-    def get_zone(self, offset_usd: float) -> Optional[int]:
-        """
-        根据偏移USD绝对值计算所在区间
-
-        Args:
-            offset_usd: 偏移USD价值（绝对值）
-
-        Returns:
-            None: 低于最低阈值
-            0-N: 区间编号
-            -1: 超过最高阈值（警报）
-        """
-        abs_usd = abs(offset_usd)
-
-        if abs_usd < self.config["threshold_min_usd"]:
-            return None
-
-        if abs_usd > self.config["threshold_max_usd"]:
-            return -1
-
-        # 计算区间
-        zone = int((abs_usd - self.config["threshold_min_usd"]) / self.config["threshold_step_usd"])
-        return zone
-
-    def _calculate_close_size(self, offset: float) -> float:
-        """
-        计算平仓数量
-
-        Args:
-            offset: 偏移量（正数或负数）
-
-        Returns:
-            应平仓的数量（根据close_ratio配置）
-        """
-        return abs(offset) * (self.config["close_ratio"] / 100)
-
-    def calculate_order_price(
-        self,
-        cost_basis: float,
-        offset: float,
-        price_offset_pct: float
-    ) -> float:
-        """
-        计算挂单价格
-
-        Args:
-            cost_basis: 成本基础
-            offset: 偏移量（正=多头敞口，负=空头敞口）
-            price_offset_pct: 价格偏移百分比（如0.2表示0.2%）
-
-        Returns:
-            挂单价格
-        """
-        if offset > 0:
-            # 多头敞口：需要卖出平仓，挂高价
-            return cost_basis * (1 + price_offset_pct / 100)
-        else:
-            # 空头敞口：需要买入平仓，挂低价
-            return cost_basis * (1 - price_offset_pct / 100)
-
-    async def process_symbol(
-        self,
-        symbol: str,
-        ideal_position: float,
-        current_price: float
-    ):
-        """
-        处理单个币种的对冲逻辑（使用新的状态管理器）
-
-        Args:
-            symbol: 币种符号
-            ideal_position: 理想持仓
-            current_price: 当前价格
-        """
-        # 从状态管理器获取币种状态
-        state = await self.state_manager.get_symbol_state(symbol)
-
-        # 从交易所获取实际持仓
-        actual_position = await self.exchange.get_position(symbol)
-        # 加上初始偏移量（用于手动调整基准）
-        actual_position += self.config["initial_offset"].get(symbol, 0.0)
-
-        # 计算偏移和成本（使用原子模块）
-        old_offset = state["offset"]
-        old_cost = state["cost_basis"]
-        new_offset, new_cost = calculate_offset_and_cost(
-            ideal_position, actual_position, current_price, old_offset, old_cost
-        )
-
-        # 更新状态到状态管理器
-        await self.state_manager.update_symbol_state(symbol, {
-            "offset": new_offset,
-            "cost_basis": new_cost
-        })
-
-        # 计算偏移USD绝对值
-        offset_usd = abs(new_offset) * current_price
-
-        # 判断区间
-        new_zone = self.get_zone(offset_usd)
-        current_zone = state.get("monitoring", {}).get("current_zone")
-        is_monitoring = state.get("monitoring", {}).get("active", False)
-
-        logger.info(f"{symbol}: actual_pos={actual_position:.4f}, ideal_pos={ideal_position:.4f}, offset={new_offset:.4f}, cost=${new_cost:.2f}, zone={new_zone}, offset_usd=${offset_usd:.2f}")
-
-        # 处理超阈值警报
-        if new_zone == -1:
-            logger.warning(f"[{symbol}] 超过最高阈值！偏移 ${offset_usd:.2f}")
-
-            # 撤单
-            if state.get("monitoring", {}).get("order_id"):
-                try:
-                    await self.exchange.cancel_order(state["monitoring"]["order_id"])
-                except OrderCancellationError as e:
-                    logger.error(f"Failed to cancel order: {e}")
-
-            # 发送Pushover警报
-            await self.notifier.alert_threshold_exceeded(
-                symbol, offset_usd, new_offset, current_price
-            )
-
-            # 重置监控状态
-            await self.state_manager.reset_symbol_monitoring(symbol)
-            await self.state_manager.save_state()
-            return
-
-        # 处理区间变化
-        if new_zone != current_zone:
-            # 区间变化，需要撤单重挂
-            if is_monitoring and state.get("monitoring", {}).get("order_id"):
-                logger.info(f"区间变化 {current_zone} → {new_zone}，撤销旧单")
-                try:
-                    await self.exchange.cancel_order(state["monitoring"]["order_id"])
-                except OrderCancellationError as e:
-                    logger.error(f"Failed to cancel order: {e}")
-
-            if new_zone is None:
-                # 回到阈值内，停止监控
-                logger.info(f"偏移回到阈值内，停止监控")
-                await self.state_manager.reset_symbol_monitoring(symbol)
-            else:
-                # 新区间，重新挂单
-                order_price = self.calculate_order_price(
-                    new_cost, new_offset, self.config["order_price_offset"]
-                )
-                order_size = self._calculate_close_size(new_offset)
-                side = "sell" if new_offset > 0 else "buy"
-
-                logger.info(f"进入区间 {new_zone}，挂单: {side} {order_size:.4f} @ ${order_price:.2f}")
-
-                try:
-                    # 通过熔断器下单
-                    exchange_breaker = await self.circuit_manager.get_or_create(
-                        f"exchange_{symbol}",
-                        failure_threshold=3,
-                        timeout=30
-                    )
-
-                    order_id = await exchange_breaker.call(
-                        self.exchange.place_limit_order,
-                        symbol, side, order_size, order_price
-                    )
-
-                    # 更新监控状态
-                    await self.state_manager.update_symbol_state(symbol, {
-                        "monitoring": {
-                            "active": True,
-                            "current_zone": new_zone,
-                            "order_id": order_id,
-                            "started_at": datetime.now().isoformat()
-                        }
-                    })
-
-                    # 增加订单计数
-                    await self.state_manager.increment_counter(symbol, "stats.total_orders")
-
-                    # 记录指标
-                    await self.metrics.record_order(
-                        symbol, side, order_size, order_price, "limit", True
-                    )
-
-                except OrderPlacementError as e:
-                    logger.error(f"Failed to place order: {e}")
-                    await self.notifier.alert_order_failed(symbol, side, order_size, str(e))
-
-                    # 记录失败指标
-                    await self.metrics.record_order(
-                        symbol, side, order_size, order_price, "limit", False
-                    )
-                    self.metrics.record_error("order_placement", str(e))
-
-        # 检查超时
-        if is_monitoring and state.get("monitoring", {}).get("started_at"):
-            started_at = datetime.fromisoformat(state["monitoring"]["started_at"])
-            elapsed = (datetime.now() - started_at).total_seconds() / 60
-            timeout = self.config["timeout_minutes"]
-
-            if elapsed >= timeout:
-                logger.warning(f"超时 {elapsed:.1f}分钟，强制市价平仓")
-
-                # 撤单
-                if state.get("monitoring", {}).get("order_id"):
-                    try:
-                        await self.exchange.cancel_order(state["monitoring"]["order_id"])
-                    except OrderCancellationError as e:
-                        logger.error(f"Failed to cancel order: {e}")
-
-                # 市价平仓
-                order_size = self._calculate_close_size(new_offset)
-                side = "sell" if new_offset > 0 else "buy"
-
-                try:
-                    # 通过熔断器执行市价单
-                    exchange_breaker = await self.circuit_manager.get_or_create(
-                        f"exchange_{symbol}",
-                        failure_threshold=3,
-                        timeout=30
-                    )
-
-                    await exchange_breaker.call(
-                        self.exchange.place_market_order,
-                        symbol, side, order_size
-                    )
-
-                    await self.notifier.alert_force_close(symbol, order_size, side)
-
-                    # 更新统计
-                    await self.state_manager.increment_counter(symbol, "stats.forced_closes")
-
-                    # 记录强制平仓指标
-                    await self.metrics.record_forced_close(symbol, order_size, current_price)
-                    await self.metrics.record_order(
-                        symbol, side, order_size, current_price, "market", True
-                    )
-
-                except OrderPlacementError as e:
-                    logger.error(f"Failed to place market order: {e}")
-                    # 市价单失败是严重问题，需要通知
-                    await self.notifier.alert_critical_error(
-                        f"Market order failed for {symbol}",
-                        str(e)
-                    )
-
-                # 重置监控状态
-                await self.state_manager.reset_symbol_monitoring(symbol)
-
-        # 保存状态
-        await self.state_manager.save_state()
 
     async def run_once_pipeline(self):
         """使用管道执行一次完整的对冲检查循环"""
         start_time = time.time()
-        logger.info(f"{'='*60}")
-        logger.info(f"Pipeline execution started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        logger.info(f"{'='*60}")
+        logger.info(f"{'='*70}")
+        logger.info(f"🚀 HEDGE ENGINE PIPELINE - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info(f"{'='*70}")
 
         try:
             # 准备管道上下文
@@ -517,8 +225,6 @@ class HedgeEngine:
                 success_count = sum(1 for r in context.results if r.status.value == "success")
                 failed_count = sum(1 for r in context.results if r.status.value == "failed")
 
-                logger.info(f"Pipeline completed: {success_count} successful steps, {failed_count} failed steps")
-
                 # 检查是否有关键步骤失败
                 critical_failures = [
                     r for r in context.results
@@ -526,8 +232,39 @@ class HedgeEngine:
                 ]
 
                 if critical_failures:
-                    logger.error(f"Critical steps failed: {[f.name for f in critical_failures]}")
+                    logger.error(f"❌ Critical steps failed: {[f.name for f in critical_failures]}")
                     raise HedgeEngineError("Critical pipeline steps failed")
+
+                # 生成最终摘要报告
+                logger.info("=" * 70)
+                logger.info("📊 PIPELINE EXECUTION SUMMARY")
+                logger.info("=" * 70)
+
+                # 显示各步骤状态
+                logger.info("📈 Step Results:")
+                for result in context.results:
+                    status_icon = "✅" if result.status.value == "success" else "❌"
+                    logger.info(f"  {status_icon} {result.name}: {result.status.value} ({result.duration:.2f}s)")
+
+                # 显示关键指标
+                if context.offsets:
+                    logger.info("💰 Position Summary:")
+                    total_offset_usd = 0
+                    for symbol, (offset, cost_basis) in context.offsets.items():
+                        if symbol in context.prices:
+                            offset_usd = abs(offset) * context.prices[symbol]
+                            total_offset_usd += offset_usd
+                            status = "🔴 LONG" if offset > 0 else ("🟢 SHORT" if offset < 0 else "✅ BALANCED")
+                            logger.info(f"  • {symbol}: {status} ${offset_usd:.2f} (Offset: {offset:+.4f})")
+                    logger.info(f"  📊 Total Exposure: ${total_offset_usd:.2f}")
+
+                # 显示执行结果
+                if context.metadata.get("execution_results"):
+                    exec_results = context.metadata["execution_results"]
+                    exec_success = sum(1 for r in exec_results if r.success)
+                    logger.info(f"⚡ Actions Executed: {exec_success}/{len(exec_results)} successful")
+
+                logger.info(f"⏱️ Total Time: {success_count} steps completed in {time.time() - start_time:.2f}s")
 
             # 更新元数据
             await self.state_manager.update_metadata({
@@ -554,7 +291,9 @@ class HedgeEngine:
                 summary = await self.metrics.export_summary()
                 logger.info(f"Metrics Summary: {json.dumps(summary, indent=2)}")
 
-            logger.info(f"Pipeline execution completed in {processing_time:.2f}s")
+            logger.info("=" * 70)
+            logger.info(f"✅ PIPELINE COMPLETED - Duration: {processing_time:.2f}s")
+            logger.info("=" * 70)
 
         except Exception as e:
             logger.error(f"Pipeline execution error: {e}")
@@ -569,106 +308,8 @@ class HedgeEngine:
             raise
 
     async def run_once(self):
-        """执行一次检查循环 - 根据配置选择管道模式或传统模式"""
-        # 检查是否使用管道模式（默认使用新的管道模式）
-        use_pipeline = os.getenv("USE_PIPELINE", "true").lower() in ("true", "1", "yes")
-
-        if use_pipeline:
-            logger.info("Using pipeline mode for execution")
-            return await self.run_once_pipeline()
-        else:
-            logger.info("Using traditional mode for execution")
-            return await self.run_once_traditional()
-
-    async def run_once_traditional(self):
-        """传统模式执行一次检查循环（保留向后兼容）"""
-        start_time = time.time()
-        logger.info(f"{'='*60}")
-        logger.info(f"检查时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        logger.info(f"{'='*60}")
-
-        try:
-            # 1. 获取JLP和ALP的理想对冲量
-            jlp_hedges = await self.get_ideal_hedges("jlp", self.config["jlp_amount"])
-            alp_hedges = await self.get_ideal_hedges("alp", self.config["alp_amount"])
-
-            # 2. 合并对冲量（按币种）
-            all_symbols = set(jlp_hedges.keys()) | set(alp_hedges.keys())
-            merged_hedges = {}
-            for symbol in all_symbols:
-                jlp_amount = jlp_hedges.get(symbol, 0.0)
-                alp_amount = alp_hedges.get(symbol, 0.0)
-                merged_hedges[symbol] = jlp_amount + alp_amount
-
-            # 3. 获取所有需要的价格（通过熔断器）
-            prices = {}
-            for symbol in merged_hedges.keys():
-                price_breaker = await self.circuit_manager.get_or_create(
-                    f"price_{symbol}",
-                    failure_threshold=5,
-                    timeout=30
-                )
-                try:
-                    price = await price_breaker.call(self.exchange.get_price, symbol)
-                    prices[symbol] = price
-                except Exception as e:
-                    logger.error(f"Failed to get price for {symbol}: {e}")
-                    # 使用上次的价格或跳过
-                    continue
-
-            # 4. 统一处理每个币种
-            for symbol, ideal_pos in merged_hedges.items():
-                if symbol not in prices:
-                    logger.warning(f"Skipping {symbol} due to missing price")
-                    continue
-
-                current_price = prices[symbol]
-
-                try:
-                    await self.process_symbol(symbol, ideal_pos, current_price)
-                except HedgeEngineError as e:
-                    logger.error(f"Failed to process {symbol}: {e}")
-                    if e.should_notify:
-                        await self.notifier.alert_error(symbol, str(e))
-                except Exception as e:
-                    logger.error(f"Unexpected error processing {symbol}: {e}")
-
-            # 更新元数据
-            await self.state_manager.update_metadata({
-                "last_check": datetime.now().isoformat(),
-                "total_runs": (await self.state_manager.get_metadata()).get("total_runs", 0) + 1
-            })
-
-            # 清理超时的订单监控
-            await self.state_manager.cleanup_stale_orders()
-
-            # 最终保存状态
-            await self.state_manager.save_state()
-
-            # 清理空闲的熔断器
-            self.circuit_manager.cleanup_idle()
-
-            # 记录处理时间指标
-            processing_time = time.time() - start_time
-            await self.metrics.record_processing("run_once", processing_time)
-
-            # 定期导出指标摘要（每10次运行）
-            total_runs = (await self.state_manager.get_metadata()).get("total_runs", 0)
-            if total_runs % 10 == 0:
-                summary = await self.metrics.export_summary()
-                logger.info(f"Metrics Summary: {json.dumps(summary, indent=2)}")
-
-        except Exception as e:
-            logger.error(f"Error in run_once: {e}")
-            # 记录错误指标
-            self.metrics.record_error(type(e).__name__, str(e))
-
-            # 记录最后的错误
-            await self.state_manager.update_metadata({
-                "last_error": str(e),
-                "last_error_time": datetime.now().isoformat()
-            })
-            raise
+        """执行一次检查循环 - 使用数据管道架构"""
+        return await self.run_once_pipeline()
 
 
 async def main():
