@@ -106,23 +106,6 @@ class ExchangeInterface(ABC):
         """
         pass
 
-    @abstractmethod
-    async def get_order_status(self, order_id: str) -> Dict:
-        """
-        查询订单状态
-
-        Args:
-            order_id: 订单ID
-
-        Returns:
-            {
-                "status": "open" | "filled" | "canceled",
-                "filled_size": 已成交数量,
-                "remaining_size": 剩余数量
-            }
-        """
-        pass
-
 
 class MockExchange(ExchangeInterface):
     """
@@ -198,17 +181,6 @@ class MockExchange(ExchangeInterface):
             print(f"  [MockExchange] 已撤单: {order_id}")
             return True
         return False
-
-    async def get_order_status(self, order_id: str) -> Dict:
-        if order_id not in self.orders:
-            return {"status": "not_found", "filled_size": 0.0, "remaining_size": 0.0}
-
-        order = self.orders[order_id]
-        return {
-            "status": order["status"],
-            "filled_size": order["filled_size"],
-            "remaining_size": order["size"] - order["filled_size"],
-        }
 
 
 class LighterExchange(ExchangeInterface):
@@ -310,15 +282,6 @@ class LighterExchange(ExchangeInterface):
             del self.order_map[order_id]
 
         return success
-
-    async def get_order_status(self, order_id: str) -> Dict:
-        """查询订单状态"""
-        if order_id not in self.order_map:
-            return {"status": "not_found", "filled_size": 0.0, "remaining_size": 0.0}
-
-        symbol, lighter_symbol = self.order_map[order_id]
-        status = await self.lighter_client.get_order_status(lighter_symbol, order_id)
-        return status
 
 
 def create_exchange(config: dict) -> ExchangeInterface:
