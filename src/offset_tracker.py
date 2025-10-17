@@ -38,27 +38,6 @@ def calculate_offset_and_cost(
         new_cost_basis:
             偏移敞口的加权平均成本
             用于计算盈亏和设置平仓价格
-
-    示例：
-        # 场景1: 首次建仓
-        >>> calculate_offset_and_cost(-100, -50, 200, 0, 0)
-        (50.0, 200.0)  # 少空50个，成本200
-
-        # 场景2: 敞口扩大
-        >>> calculate_offset_and_cost(-105, -50, 210, 50, 200)
-        (55.0, 200.91)  # 新增5个敞口@210，成本从200升到200.91
-
-        # 场景3: 敞口缩小
-        >>> calculate_offset_and_cost(-110, -70, 215, 60, 202.5)
-        (40.0, 202.5)  # 平掉20个@215，剩余40个成本仍为202.5
-
-        # 场景4: 完全平仓
-        >>> calculate_offset_and_cost(-110, -110, 220, 40, 202.5)
-        (0.0, 0.0)  # 偏移归零
-
-        # 场景5: 反转
-        >>> calculate_offset_and_cost(-110, -120, 225, 10, 202.5)
-        (-10.0, 225.0)  # 从多头敞口变成空头敞口，重新计价
     """
     # 1. 计算新偏移
     new_offset = actual_position - ideal_position
