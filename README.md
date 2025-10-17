@@ -107,6 +107,8 @@ docker-compose logs -f
 
 **All configuration via `.env` file** (12-factor app compliant):
 
+**Optional**: You can also create `config.json` from the example template, but environment variables take priority.
+
 ```env
 # Required
 EXCHANGE_NAME=lighter
@@ -126,7 +128,7 @@ TIMEOUT_MINUTES=20
 CHECK_INTERVAL_SECONDS=60
 ```
 
-> 💡 **Note**: `config.json` is now optional. Environment variables take priority.
+> 💡 **Note**: `config.json` is optional. Environment variables take priority.
 > 💡 **Thresholds**: Now use USD absolute values instead of percentages for simpler, more predictable behavior.
 
 ### Running Tests
@@ -190,7 +192,7 @@ To add a new exchange, implement the `ExchangeInterface` abstract class in `src/
 
 ## State Management
 
-The system maintains state in `state.json` (auto-created from template):
+The system maintains state in `data/state.json` (auto-created from `state_template.json`):
 
 ```json
 {
