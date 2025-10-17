@@ -17,22 +17,26 @@ This system automatically calculates ideal hedge positions from on-chain data an
 
 ```
 xLP/
-├── src/                    # Core source code
-│   ├── JLP_Hedge.py       # JLP pool hedge calculator
-│   ├── ALP_Hedge.py       # ALP pool hedge calculator
-│   ├── offset_tracker.py  # ⭐ Atomic cost tracking module
-│   ├── HedgeEngine.py     # Core hedge engine
+├── src/                        # Core source code
+│   ├── jlp_hedge.py           # JLP pool hedge calculator
+│   ├── alp_hedge.py           # ALP pool hedge calculator
+│   ├── offset_tracker.py      # ⭐ Atomic cost tracking module
+│   ├── hedge_engine.py        # Core hedge engine
+│   ├── lighter_integration.py # Lighter exchange integration
 │   ├── exchange_interface.py  # Exchange abstraction layer
-│   ├── notifier.py        # Pushover notifications
-│   └── main.py            # Main loop
-├── tests/                  # Test suite
+│   ├── notifier.py            # Pushover notifications
+│   └── main.py                # Main loop
+├── tests/                      # Test suite
 │   ├── test_cost_tracking.py
 │   ├── test_cost_detailed.py
 │   └── test_10_steps.py
-├── docs/                   # Documentation
-│   └── ARCHITECTURE.md    # Detailed architecture docs
-├── config.json            # Configuration file
-└── state_template.json    # State file template
+├── docs/                       # Documentation
+│   └── ARCHITECTURE.md
+├── Dockerfile                  # Docker image
+├── docker-compose.yml          # One-command deployment
+├── .env.example               # Environment variables template
+├── config.json                # Configuration (optional)
+└── state_template.json        # State file template
 ```
 
 ## Key Features
@@ -75,37 +79,45 @@ Positions tracked by symbol (SOL, ETH, BTC, BONK), not by pool. JLP and ALP posi
 
 ## Quick Start
 
-### Installation
+**🐳 Recommended: Docker Deployment** (see [QUICKSTART.md](QUICKSTART.md))
 
 ```bash
-# Clone the repository
-git clone https://github.com/YOUR_USERNAME/xLP.git
+# 1. Clone and configure
+git clone https://github.com/giraphant/xLP.git
 cd xLP
+cp .env.example .env
+nano .env  # Fill in your settings
 
-# Install dependencies
-pip install httpx  # For notifications (optional)
+# 2. Start with one command
+mkdir -p data logs
+docker-compose up -d
 
-# Copy and configure
-cp config.json config.local.json
-# Edit config.local.json with your settings
+# 3. Monitor
+docker-compose logs -f
 ```
 
-### Configuration
+### Configuration (Environment Variables)
 
-Edit `config.json`:
+**All configuration via `.env` file** (12-factor app compliant):
 
-```json
-{
-  "jlp_amount": 50000,        // Your JLP holdings
-  "alp_amount": 10000,        // Your ALP holdings
-  "threshold_min": 1.0,       // Min threshold %
-  "threshold_max": 2.0,       // Max threshold %
-  "threshold_step": 0.2,      // Zone step size %
-  "order_price_offset": 0.2,  // Limit order offset %
-  "close_ratio": 40.0,        // Close % per trigger
-  "timeout_minutes": 20       // Timeout before forced close
-}
+```env
+# Required
+EXCHANGE_NAME=lighter
+EXCHANGE_PRIVATE_KEY=your_lighter_private_key
+JLP_AMOUNT=50000
+ALP_AMOUNT=10000
+
+# Optional (with defaults)
+THRESHOLD_MIN=1.0
+THRESHOLD_MAX=2.0
+THRESHOLD_STEP=0.2
+ORDER_PRICE_OFFSET=0.2
+CLOSE_RATIO=40.0
+TIMEOUT_MINUTES=20
+CHECK_INTERVAL_SECONDS=60
 ```
+
+> 💡 **Note**: `config.json` is now optional. Environment variables take priority.
 
 ### Running Tests
 
@@ -155,8 +167,14 @@ See `tests/test_10_steps.py` for a complete walkthrough.
 ## Exchange Integration
 
 Currently supports:
-- ✅ MockExchange (for testing)
-- 🚧 LighterExchange (in development)
+- ✅ **Lighter Exchange** - Solana perpetuals DEX (production-ready)
+- ✅ **MockExchange** - For testing and development
+
+Test Lighter integration:
+```bash
+export EXCHANGE_PRIVATE_KEY=your_private_key
+python test_lighter.py
+```
 
 To add a new exchange, implement the `ExchangeInterface` abstract class in `src/exchange_interface.py`.
 
@@ -188,14 +206,11 @@ Pushover integration for:
 - 🔔 Forced close notifications
 - 📊 Order placement updates (optional)
 
-Configure in `config.json`:
-```json
-{
-  "pushover": {
-    "user_key": "YOUR_USER_KEY",
-    "api_token": "YOUR_API_TOKEN"
-  }
-}
+Configure via environment variables:
+```env
+PUSHOVER_USER_KEY=your_user_key
+PUSHOVER_API_TOKEN=your_api_token
+PUSHOVER_ENABLED=true
 ```
 
 ## Documentation
@@ -213,7 +228,9 @@ Configure in `config.json`:
 
 ## Roadmap
 
-- [ ] Complete Lighter exchange integration
+- [x] ✅ Lighter exchange integration (completed)
+- [x] ✅ Docker deployment support
+- [x] ✅ Environment-based configuration (12-factor app)
 - [ ] Add support for additional exchanges (Binance, OKX)
 - [ ] Structured logging system
 - [ ] Additional risk controls

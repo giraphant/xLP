@@ -24,23 +24,25 @@ nano .env
 
 ### 2. 填写必要配置
 
-编辑 `.env`：
+**完全使用环境变量，无需 config.json**
+
+编辑 `.env`（所有配置项已在文件中列出）：
 
 ```env
-# Lighter Exchange
+# 必填项
 EXCHANGE_NAME=lighter
 EXCHANGE_PRIVATE_KEY=你的Lighter私钥
-EXCHANGE_ACCOUNT_INDEX=0
-EXCHANGE_API_KEY_INDEX=0
-
-# Pushover通知（可选）
-PUSHOVER_USER_KEY=你的user_key
-PUSHOVER_API_TOKEN=你的api_token
-
-# 持仓量
 JLP_AMOUNT=50000
 ALP_AMOUNT=10000
+
+# 可选项（已有默认值）
+PUSHOVER_USER_KEY=你的user_key
+PUSHOVER_API_TOKEN=你的api_token
+THRESHOLD_MIN=1.0
+CHECK_INTERVAL_SECONDS=60
 ```
+
+> 💡 **提示**: config.json 现在是可选的，环境变量优先级更高
 
 ### 3. 启动服务
 
@@ -138,38 +140,36 @@ await exchange.cancel_order(order_id)
 
 ## 🔧 配置说明
 
-### config.json
+### 完全环境变量驱动
 
-```json
-{
-  "jlp_amount": 50000,           // JLP持仓量
-  "alp_amount": 10000,           // ALP持仓量
-  "threshold_min": 1.0,          // 最小触发阈值 1%
-  "threshold_max": 2.0,          // 最大告警阈值 2%
-  "threshold_step": 0.2,         // 区间步长 0.2%
-  "order_price_offset": 0.2,     // 挂单价格偏移 0.2%
-  "close_ratio": 40.0,           // 每次平仓比例 40%
-  "timeout_minutes": 20,         // 超时分钟数
-  "check_interval_seconds": 60,  // 检查间隔（秒）
+**新设计**: 所有配置通过 `.env` 文件提供，符合 12-factor app 原则
 
-  "exchange": {
-    "name": "lighter",           // 或 "mock" 用于测试
-    "private_key": "",
-    "account_index": 0,
-    "api_key_index": 0
-  }
-}
+**主要配置项**:
+```env
+# 必填
+EXCHANGE_NAME=lighter
+EXCHANGE_PRIVATE_KEY=你的私钥
+JLP_AMOUNT=50000
+ALP_AMOUNT=10000
+
+# 策略参数（有默认值）
+THRESHOLD_MIN=1.0              # 最小触发阈值
+THRESHOLD_MAX=2.0              # 最大告警阈值
+THRESHOLD_STEP=0.2             # 区间步长
+ORDER_PRICE_OFFSET=0.2         # 挂单价格偏移
+CLOSE_RATIO=40.0               # 每次平仓比例
+TIMEOUT_MINUTES=20             # 超时分钟数
+CHECK_INTERVAL_SECONDS=60      # 检查间隔
 ```
 
-### 环境变量优先级
+### config.json（可选）
 
+config.json 现在是**可选的**，仅作为环境变量的默认值：
 ```
-环境变量 > config.json > 默认值
+环境变量（优先） > config.json（默认） > 代码默认值
 ```
 
-推荐：
-- 敏感信息（私钥）→ 环境变量
-- 策略参数 → config.json
+推荐：**只使用 .env，不需要 config.json**
 
 ## 📁 项目结构
 

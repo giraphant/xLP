@@ -3,8 +3,9 @@ FROM python:3.11-slim
 # 设置工作目录
 WORKDIR /app
 
-# 安装系统依赖（如果需要编译某些Python包）
+# 安装系统依赖（git用于安装Lighter SDK，gcc用于编译）
 RUN apt-get update && apt-get install -y \
+    git \
     gcc \
     && rm -rf /var/lib/apt/lists/*
 
@@ -16,8 +17,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # 复制源代码
 COPY src/ ./src/
-COPY config.json .
 COPY state_template.json .
+
+# config.json是可选的（环境变量优先）
+COPY config.json* ./ || true
 
 # 创建状态文件目录（用于volume挂载）
 RUN mkdir -p /app/data /app/logs

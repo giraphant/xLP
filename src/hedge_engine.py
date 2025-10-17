@@ -5,6 +5,7 @@
 """
 
 import json
+import os
 import asyncio
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Tuple
@@ -30,12 +31,59 @@ class HedgeEngine:
         self.notifier = Notifier(self.config["pushover"])
 
     def _load_config(self) -> dict:
-        """加载配置文件"""
-        if not self.config_path.exists():
-            raise FileNotFoundError(f"Config file not found: {self.config_path}")
+        """
+        加载配置 - 优先使用环境变量，config.json作为默认值
+        环境变量 > config.json
+        """
+        # 从config.json加载默认值（如果存在）
+        config = {}
+        if self.config_path.exists():
+            with open(self.config_path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
 
-        with open(self.config_path, 'r', encoding='utf-8') as f:
-            return json.load(f)
+        # 从环境变量覆盖（优先级更高）
+        config["jlp_amount"] = float(os.getenv("JLP_AMOUNT", config.get("jlp_amount", 50000)))
+        config["alp_amount"] = float(os.getenv("ALP_AMOUNT", config.get("alp_amount", 10000)))
+
+        config["threshold_min"] = float(os.getenv("THRESHOLD_MIN", config.get("threshold_min", 1.0)))
+        config["threshold_max"] = float(os.getenv("THRESHOLD_MAX", config.get("threshold_max", 2.0)))
+        config["threshold_step"] = float(os.getenv("THRESHOLD_STEP", config.get("threshold_step", 0.2)))
+        config["order_price_offset"] = float(os.getenv("ORDER_PRICE_OFFSET", config.get("order_price_offset", 0.2)))
+        config["close_ratio"] = float(os.getenv("CLOSE_RATIO", config.get("close_ratio", 40.0)))
+        config["timeout_minutes"] = int(os.getenv("TIMEOUT_MINUTES", config.get("timeout_minutes", 20)))
+        config["check_interval_seconds"] = int(os.getenv("CHECK_INTERVAL_SECONDS", config.get("check_interval_seconds", 60)))
+
+        # 初始偏移量（从环境变量或config.json）
+        initial_offset = config.get("initial_offset", {})
+        config["initial_offset"] = {
+            "SOL": float(os.getenv("INITIAL_OFFSET_SOL", initial_offset.get("SOL", 0.0))),
+            "ETH": float(os.getenv("INITIAL_OFFSET_ETH", initial_offset.get("ETH", 0.0))),
+            "BTC": float(os.getenv("INITIAL_OFFSET_BTC", initial_offset.get("BTC", 0.0))),
+            "BONK": float(os.getenv("INITIAL_OFFSET_BONK", initial_offset.get("BONK", 0.0))),
+        }
+
+        # Exchange配置
+        exchange_config = config.get("exchange", {})
+        config["exchange"] = {
+            "name": os.getenv("EXCHANGE_NAME", exchange_config.get("name", "mock")),
+            "private_key": os.getenv("EXCHANGE_PRIVATE_KEY", exchange_config.get("private_key", "")),
+            "account_index": int(os.getenv("EXCHANGE_ACCOUNT_INDEX", exchange_config.get("account_index", 0))),
+            "api_key_index": int(os.getenv("EXCHANGE_API_KEY_INDEX", exchange_config.get("api_key_index", 0))),
+            "base_url": os.getenv("EXCHANGE_BASE_URL", exchange_config.get("base_url", "https://mainnet.zklighter.elliot.ai")),
+        }
+
+        # Pushover配置
+        pushover_config = config.get("pushover", {})
+        config["pushover"] = {
+            "user_key": os.getenv("PUSHOVER_USER_KEY", pushover_config.get("user_key", "")),
+            "api_token": os.getenv("PUSHOVER_API_TOKEN", pushover_config.get("api_token", "")),
+            "enabled": os.getenv("PUSHOVER_ENABLED", str(pushover_config.get("enabled", True))).lower() in ("true", "1", "yes"),
+        }
+
+        # RPC URL
+        config["rpc_url"] = os.getenv("RPC_URL", config.get("rpc_url", "https://api.mainnet-beta.solana.com"))
+
+        return config
 
     def _load_state(self) -> dict:
         """加载状态文件，如果不存在则创建"""
