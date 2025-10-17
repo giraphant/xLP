@@ -130,7 +130,7 @@ cp .env.example .env
 nano .env  # Fill in your settings
 
 # 2. Start with one command
-mkdir -p data logs
+mkdir -p logs
 docker-compose up -d
 
 # 3. Monitor

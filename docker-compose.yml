@@ -8,11 +8,9 @@ services:
 
     # 持久化存储
     volumes:
-      # 状态文件持久化（必须）
-      - ./data:/app/data
-      # 日志持久化（可选）
+      # 指标导出持久化（可选）
       - ./logs:/app/logs
-      
+
     # 日志配置
     logging:
       driver: "json-file"
@@ -20,9 +18,9 @@ services:
         max-size: "10m"
         max-file: "3"
 
-    # 健康检查
+    # 健康检查（检查主进程是否运行）
     healthcheck:
-      test: ["CMD", "python", "-c", "import json; json.load(open('/app/data/state.json'))"]
+      test: ["CMD", "pgrep", "-f", "python.*main.py"]
       interval: 60s
       timeout: 10s
       retries: 3
