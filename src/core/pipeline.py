@@ -28,6 +28,7 @@ __all__ = [
     'CalculateIdealHedgesStep',
     'FetchMarketDataStep',
     'CalculateOffsetsStep',
+    'ApplyPredefinedOffsetStep',
     'DecideActionsStep',
     'ExecuteActionsStep',
     'logging_middleware',
@@ -465,6 +466,58 @@ class CalculateOffsetsStep(PipelineStep):
         return offsets
 
 
+class ApplyPredefinedOffsetStep(PipelineStep):
+    """应用预设偏移量步骤 - 处理外部对冲调整"""
+
+    def __init__(self):
+        super().__init__(
+            name="ApplyPredefinedOffset",
+            required=False,  # 非必需，如果没有配置就跳过
+            retry_times=0,
+            timeout=5
+        )
+
+    async def _run(self, context: PipelineContext) -> Dict[str, Tuple[float, float]]:
+        """应用预设的偏移量调整（用于外部对冲）"""
+        predefined = context.config.get("predefined_offset", {})
+
+        if not predefined:
+            logger.info("✅ No predefined offset configured, skipping")
+            return context.offsets
+
+        logger.info("=" * 50)
+        logger.info("🔧 APPLYING PREDEFINED OFFSETS")
+        logger.info("=" * 50)
+
+        # 保存原始offset用于对比和调试
+        context.metadata["raw_offsets"] = context.offsets.copy()
+
+        adjusted_count = 0
+        for symbol, adjustment in predefined.items():
+            if symbol in context.offsets:
+                old_offset, cost_basis = context.offsets[symbol]
+                new_offset = old_offset - adjustment
+
+                # 计算USD价值
+                if symbol in context.prices:
+                    old_offset_usd = abs(old_offset) * context.prices[symbol]
+                    new_offset_usd = abs(new_offset) * context.prices[symbol]
+
+                    logger.info(f"📊 {symbol}:")
+                    logger.info(f"  ├─ Raw Offset: {old_offset:+.6f} (${old_offset_usd:.2f})")
+                    logger.info(f"  ├─ Adjustment: {adjustment:+.6f} (external hedge)")
+                    logger.info(f"  └─ Final Offset: {new_offset:+.6f} (${new_offset_usd:.2f})")
+
+                    # 更新context
+                    context.offsets[symbol] = (new_offset, cost_basis)
+                    adjusted_count += 1
+            else:
+                logger.warning(f"⚠️ Symbol {symbol} has predefined offset but no calculated offset, skipping")
+
+        logger.info(f"✅ Applied predefined offsets for {adjusted_count} symbols")
+        return context.offsets
+
+
 class DecideActionsStep(PipelineStep):
     """决策步骤 - 使用决策引擎决定需要执行的操作"""
 
@@ -660,6 +713,7 @@ def create_hedge_pipeline(
     pipeline.add_step(CalculateIdealHedgesStep())
     pipeline.add_step(FetchMarketDataStep(exchange))
     pipeline.add_step(CalculateOffsetsStep(offset_calculator, state_manager))
+    pipeline.add_step(ApplyPredefinedOffsetStep())  # 应用外部对冲调整
     pipeline.add_step(DecideActionsStep(decision_engine))
     pipeline.add_step(ExecuteActionsStep(action_executor))
 
