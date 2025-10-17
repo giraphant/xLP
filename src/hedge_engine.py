@@ -56,9 +56,8 @@ logger = logging.getLogger(__name__)
 
 
 class HedgeEngine:
-    def __init__(self, config_path: str = "config.json", state_path: str = "data/state.json"):
+    def __init__(self, config_path: str = "config.json"):
         self.config_path = Path(config_path)
-        self.state_path = Path(state_path)
 
         # 使用新的配置验证器加载配置
         try:
@@ -69,11 +68,8 @@ class HedgeEngine:
             logger.critical(f"Configuration validation failed: {e}")
             raise InvalidConfigError("config", str(e), "Valid configuration required")
 
-        # 初始化状态管理器
-        self.state_manager = StateManager(
-            state_path=self.state_path,
-            backup_dir=Path("data/backups")
-        )
+        # 初始化状态管理器（内存模式）
+        self.state_manager = StateManager()
 
         # 初始化熔断器管理器
         self.circuit_manager = CircuitBreakerManager()
@@ -275,9 +271,6 @@ class HedgeEngine:
 
             # 清理超时的订单监控
             await self.state_manager.cleanup_stale_orders()
-
-            # 保存状态
-            await self.state_manager.save_state()
 
             # 清理空闲的熔断器
             self.circuit_manager.cleanup_idle()
