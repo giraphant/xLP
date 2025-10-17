@@ -224,7 +224,7 @@ docker exec xlp-hedge-engine ls -la /app/data/
 
 ```bash
 # 1. 拉取最新代码
-git pull origin master
+git pull origin main
 
 # 2. 停止服务
 docker-compose down
