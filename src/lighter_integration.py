@@ -74,67 +74,40 @@ class LighterClient:
 
         try:
             # Get all available markets (returns OrderBooks object)
+            # See: https://github.com/elliottech/lighter-python/blob/main/lighter/models/order_books.py
             order_books_response = await self.client.order_api.order_books()
 
-            logger.debug(f"Received OrderBooks response: {order_books_response}")
-            logger.debug(f"OrderBooks attributes: {dir(order_books_response)}")
+            # OrderBooks has .order_books field which is List[OrderBook]
+            markets = order_books_response.order_books
 
-            # The OrderBooks object should have a list of markets
-            # Try common attribute names
-            markets = None
-            for attr in ['order_books', 'markets', 'data', 'results', 'items']:
-                if hasattr(order_books_response, attr):
-                    markets = getattr(order_books_response, attr)
-                    logger.debug(f"Found markets list in attribute: {attr}")
-                    break
+            logger.info(f"Loaded {len(markets)} markets from Lighter API")
 
-            if not markets:
-                # Maybe it's iterable directly
-                try:
-                    markets = list(order_books_response)
-                    logger.debug("OrderBooks object is directly iterable")
-                except TypeError:
-                    logger.error("Could not extract markets list from OrderBooks response")
-                    logger.error(f"Response type: {type(order_books_response)}")
-                    logger.error(f"Response value: {order_books_response}")
-                    return
+            for market in markets:
+                # OrderBook fields: symbol, market_id, supported_size_decimals, supported_price_decimals
+                # See: https://github.com/elliottech/lighter-python/blob/main/lighter/models/order_book.py
 
-            logger.debug(f"Found {len(markets)} markets")
+                symbol = market.symbol
+                market_id = market.market_id
+                size_decimals = market.supported_size_decimals
+                price_decimals = market.supported_price_decimals
 
-            if markets:
-                # Log first market to see structure
-                if len(markets) > 0:
-                    first_market = markets[0]
-                    logger.debug(f"First market object: {first_market}")
-                    logger.debug(f"First market attributes: {dir(first_market)}")
+                logger.debug(f"Market: {symbol} (ID={market_id}, size_dec={size_decimals}, price_dec={price_decimals})")
 
-                for market in markets:
-                    # Try different possible field names
-                    symbol = None
-                    for attr in ['symbol', 'name', 'market_symbol', 'pair', 'market_name']:
-                        if hasattr(market, attr):
-                            symbol = getattr(market, attr)
-                            if symbol:
-                                break
+                # Only load active markets
+                if market.status == 'active':
+                    self.symbol_to_market_id[symbol] = market_id
+                    self.market_info[market_id] = {
+                        "symbol": symbol,
+                        "size_decimals": size_decimals,
+                        "price_decimals": price_decimals,
+                        "base_multiplier": 10 ** size_decimals,
+                        "price_multiplier": 10 ** price_decimals,
+                    }
+                else:
+                    logger.debug(f"Skipping {symbol} (status={market.status})")
 
-                    # Try to get market_id
-                    market_id = getattr(market, 'market_id', getattr(market, 'id', None))
-
-                    logger.debug(f"Market: symbol={symbol}, id={market_id}")
-
-                    if symbol and market_id is not None:
-                        self.symbol_to_market_id[symbol] = market_id
-                        self.market_info[market_id] = {
-                            "symbol": symbol,
-                            "size_decimals": getattr(market, 'size_decimals', 9),
-                            "price_decimals": getattr(market, 'price_decimals', 6),
-                            "base_multiplier": 10 ** getattr(market, 'size_decimals', 9),
-                            "price_multiplier": 10 ** getattr(market, 'price_decimals', 6),
-                        }
-
-            logger.info(f"Loaded {len(self.symbol_to_market_id)} markets from Lighter")
-            if self.symbol_to_market_id:
-                logger.info(f"Available markets: {list(self.symbol_to_market_id.keys())}")
+            logger.info(f"Loaded {len(self.symbol_to_market_id)} active markets")
+            logger.info(f"Available markets: {sorted(self.symbol_to_market_id.keys())}")
 
         except Exception as e:
             logger.error(f"Failed to load markets: {e}")
