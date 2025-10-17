@@ -375,23 +375,66 @@ class LighterClient:
         Returns:
             Order ID
         """
+        if self.client is None:
+            await self.initialize()
+
+        # Get market ID and info
+        market_id = await self.get_market_id(symbol)
+        market_info = await self.get_market_info(symbol)
+
         # Get current market price
         current_price = await self.get_price(symbol)
 
-        # Use extreme price to ensure immediate execution
+        # Use extreme price to ensure immediate execution (20% buffer to avoid accidental price flag)
         if side.lower() == "buy":
-            price = current_price * 1.05  # 5% above market
+            price = current_price * 1.20  # 20% above market
         else:
-            price = current_price * 0.95  # 5% below market
+            price = current_price * 0.80  # 20% below market
 
-        # Place IOC limit order
-        return await self.place_limit_order(
-            symbol=symbol,
-            side=side,
-            size=size,
-            price=price,
-            reduce_only=False
-        )
+        # Convert size for 1000X markets (e.g., 1000BONK)
+        size = self._convert_1000x_size(symbol, size, to_lighter=True)
+
+        # Convert to Lighter's integer format
+        is_ask = side.lower() == "sell"
+        base_amount = int(size * market_info["base_multiplier"])
+        price_int = int(price * market_info["price_multiplier"])
+
+        # Generate client order ID
+        client_order_index = int(time.time() * 1000) % 1000000
+
+        try:
+            # Use IOC (Immediate Or Cancel) for market-like execution
+            order_params = {
+                'market_index': market_id,
+                'client_order_index': client_order_index,
+                'base_amount': base_amount,
+                'price': price_int,
+                'is_ask': is_ask,
+                'order_type': self.client.ORDER_TYPE_LIMIT,
+                'time_in_force': self.client.ORDER_TIME_IN_FORCE_IMMEDIATE_OR_CANCEL,
+                'reduce_only': False,
+                'trigger_price': 0,
+            }
+
+            order_result, tx_hash, error = await self.client.create_order(**order_params)
+
+            if error:
+                logger.error(f"Market order failed: {error}")
+                raise Exception(f"Market order failed: {error}")
+
+            logger.info(f"Market order: {side} {size:.4f} {symbol} @ ~${current_price:.2f}")
+
+            # Return tx_hash as order identifier
+            if hasattr(tx_hash, 'tx_hash'):
+                return str(tx_hash.tx_hash)
+            else:
+                return str(tx_hash)
+
+        except Exception as e:
+            logger.error(f"Failed to place market order: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            raise
 
     async def cancel_order(self, symbol: str, order_id: str) -> bool:
         """
