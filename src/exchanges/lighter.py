@@ -6,6 +6,7 @@ Based on: https://github.com/your-quantguy/perp-dex-tools
 
 import time
 import logging
+import traceback
 from typing import Dict, Optional
 
 from lighter import SignerClient, ApiClient, Configuration, AccountApi
@@ -146,7 +147,6 @@ class LighterClient:
 
         except Exception as e:
             logger.error(f"Failed to load markets: {e}")
-            import traceback
             logger.error(traceback.format_exc())
             raise
 
@@ -231,7 +231,6 @@ class LighterClient:
 
         except Exception as e:
             logger.error(f"Failed to get position for {symbol}: {e}")
-            import traceback
             logger.error(traceback.format_exc())
             raise
 
@@ -354,7 +353,6 @@ class LighterClient:
 
         except Exception as e:
             logger.error(f"Failed to place limit order: {e}")
-            import traceback
             logger.error(traceback.format_exc())
             raise
 
@@ -432,7 +430,6 @@ class LighterClient:
 
         except Exception as e:
             logger.error(f"Failed to place market order: {e}")
-            import traceback
             logger.error(traceback.format_exc())
             raise
 

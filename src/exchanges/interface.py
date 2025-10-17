@@ -204,7 +204,7 @@ class LighterExchange(ExchangeInterface):
 
         # Initialize Lighter client
         self.lighter_client = LighterClient(
-            private_key=config.get("api_key", config.get("private_key")),
+            private_key=config.get("private_key"),
             account_index=config.get("account_index", 0),
             api_key_index=config.get("api_key_index", 0),
             base_url=config.get("base_url", "https://mainnet.zklighter.elliot.ai")
