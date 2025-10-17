@@ -45,9 +45,9 @@ class HedgeEngine:
         config["jlp_amount"] = float(os.getenv("JLP_AMOUNT", config.get("jlp_amount", 50000)))
         config["alp_amount"] = float(os.getenv("ALP_AMOUNT", config.get("alp_amount", 10000)))
 
-        config["threshold_min"] = float(os.getenv("THRESHOLD_MIN", config.get("threshold_min", 1.0)))
-        config["threshold_max"] = float(os.getenv("THRESHOLD_MAX", config.get("threshold_max", 2.0)))
-        config["threshold_step"] = float(os.getenv("THRESHOLD_STEP", config.get("threshold_step", 0.2)))
+        config["threshold_min_usd"] = float(os.getenv("THRESHOLD_MIN_USD", config.get("threshold_min_usd", 5.0)))
+        config["threshold_max_usd"] = float(os.getenv("THRESHOLD_MAX_USD", config.get("threshold_max_usd", 20.0)))
+        config["threshold_step_usd"] = float(os.getenv("THRESHOLD_STEP_USD", config.get("threshold_step_usd", 2.5)))
         config["order_price_offset"] = float(os.getenv("ORDER_PRICE_OFFSET", config.get("order_price_offset", 0.2)))
         config["close_ratio"] = float(os.getenv("CLOSE_RATIO", config.get("close_ratio", 40.0)))
         config["timeout_minutes"] = int(os.getenv("TIMEOUT_MINUTES", config.get("timeout_minutes", 20)))
@@ -136,64 +136,28 @@ class HedgeEngine:
 
         return result
 
-    async def calculate_pool_value(self, pool_type: str, amount: float, prices: Dict[str, float]) -> float:
+    def get_zone(self, offset_usd: float) -> Optional[int]:
         """
-        计算JLP或ALP的总USD价值（包括所有资产，含稳定币）
+        根据偏移USD绝对值计算所在区间
 
         Args:
-            pool_type: "jlp" 或 "alp"
-            amount: JLP或ALP数量
-            prices: 价格字典（已获取的价格）
-
-        Returns:
-            总USD价值
-        """
-        if pool_type == "jlp":
-            positions = await jlp_hedge.calculate_hedge(amount)
-        elif pool_type == "alp":
-            positions = await alp_hedge.calculate_hedge(amount)
-        else:
-            return 0.0
-
-        total_value = 0.0
-        for symbol, data in positions.items():
-            asset_amount = data["amount"]
-
-            # 获取价格
-            if symbol == "WBTC":
-                price = prices.get("BTC", 0)
-            elif symbol in ["USDC", "USDT"]:
-                price = 1.0  # 稳定币价格
-            else:
-                price = prices.get(symbol, 0)
-
-            total_value += abs(asset_amount) * price
-
-        return total_value
-
-
-    def get_zone(self, offset_pct: float) -> Optional[int]:
-        """
-        根据偏移百分比计算所在区间
-
-        Args:
-            offset_pct: 偏移USD价值占总价值的百分比
+            offset_usd: 偏移USD价值（绝对值）
 
         Returns:
             None: 低于最低阈值
             0-N: 区间编号
             -1: 超过最高阈值（警报）
         """
-        abs_pct = abs(offset_pct)
+        abs_usd = abs(offset_usd)
 
-        if abs_pct < self.config["threshold_min"]:
+        if abs_usd < self.config["threshold_min_usd"]:
             return None
 
-        if abs_pct > self.config["threshold_max"]:
+        if abs_usd > self.config["threshold_max_usd"]:
             return -1
 
         # 计算区间
-        zone = int((abs_pct - self.config["threshold_min"]) / self.config["threshold_step"])
+        zone = int((abs_usd - self.config["threshold_min_usd"]) / self.config["threshold_step_usd"])
         return zone
 
     def calculate_order_price(
@@ -224,8 +188,7 @@ class HedgeEngine:
         self,
         symbol: str,
         ideal_position: float,
-        current_price: float,
-        total_portfolio_value: float
+        current_price: float
     ):
         """
         处理单个币种的对冲逻辑
@@ -234,7 +197,6 @@ class HedgeEngine:
             symbol: 币种符号
             ideal_position: 理想持仓
             current_price: 当前价格
-            total_portfolio_value: JLP+ALP总组合价值（USD）
         """
         state = self.state["symbols"][symbol]
 
@@ -255,20 +217,19 @@ class HedgeEngine:
         state["cost_basis"] = new_cost
         state["last_updated"] = datetime.now().isoformat()
 
-        # 计算偏移USD价值百分比（相对于总组合价值）
+        # 计算偏移USD绝对值
         offset_usd = abs(new_offset) * current_price
-        offset_pct = (offset_usd / total_portfolio_value) * 100 if total_portfolio_value > 0 else 0
 
         # 判断区间
-        new_zone = self.get_zone(offset_pct)
+        new_zone = self.get_zone(offset_usd)
         current_zone = state["monitoring"]["current_zone"]
         is_monitoring = state["monitoring"]["active"]
 
-        print(f"{symbol}: offset={new_offset:.4f}, cost=${new_cost:.2f}, zone={new_zone}, offset%={offset_pct:.3f}%")
+        print(f"{symbol}: offset={new_offset:.4f}, cost=${new_cost:.2f}, zone={new_zone}, offset_usd=${offset_usd:.2f}")
 
         # 处理超阈值警报
         if new_zone == -1:
-            print(f"⚠️  [{symbol}] 超过最高阈值！偏移 {offset_pct:.2f}%")
+            print(f"⚠️  [{symbol}] 超过最高阈值！偏移 ${offset_usd:.2f}")
 
             # 撤单
             if state["monitoring"]["order_id"]:
@@ -276,7 +237,7 @@ class HedgeEngine:
 
             # 发送Pushover警报
             await self.notifier.alert_threshold_exceeded(
-                symbol, offset_pct, new_offset, current_price
+                symbol, offset_usd, new_offset, current_price
             )
 
             state["monitoring"]["active"] = False
@@ -367,20 +328,12 @@ class HedgeEngine:
             price = await self.exchange.get_price(symbol)
             prices[symbol] = price
 
-        # 4. 计算JLP+ALP的总组合价值（包括稳定币）
-        jlp_value = await self.calculate_pool_value("jlp", self.config["jlp_amount"], prices)
-        alp_value = await self.calculate_pool_value("alp", self.config["alp_amount"], prices)
-        total_portfolio_value = jlp_value + alp_value
-
-        print(f"JLP总价值: ${jlp_value:,.2f}")
-        print(f"ALP总价值: ${alp_value:,.2f}")
-        print(f"组合总价值: ${total_portfolio_value:,.2f}")
         print()
 
-        # 5. 统一处理每个币种
+        # 4. 统一处理每个币种
         for symbol, ideal_pos in merged_hedges.items():
             current_price = prices[symbol]
-            await self.process_symbol(symbol, ideal_pos, current_price, total_portfolio_value)
+            await self.process_symbol(symbol, ideal_pos, current_price)
 
         self.state["last_check"] = datetime.now().isoformat()
         self._save_state()
