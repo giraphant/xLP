@@ -365,7 +365,13 @@ class LighterClient:
                 raise Exception(f"Order creation failed: {error}")
 
             logger.info(f"Limit order placed successfully: {side} {size} @ {price}, tx: {tx_hash}")
-            return str(order_result.order_id) if order_result else tx_hash
+
+            # Return tx_hash as order identifier
+            # The tx_hash object has a tx_hash attribute with the actual hash string
+            if hasattr(tx_hash, 'tx_hash'):
+                return str(tx_hash.tx_hash)
+            else:
+                return str(tx_hash)
 
         except Exception as e:
             logger.error(f"Failed to place limit order: {e}")
