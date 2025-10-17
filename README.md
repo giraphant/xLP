@@ -95,7 +95,8 @@ This single formula correctly handles:
 Support for external hedges or intentional exposure via **predefined offsets**:
 ```bash
 # Already hedged 1 SOL on Binance, reduce system hedge by 1
-PREDEFINED_OFFSET='{"SOL": -1.0, "BTC": 0.05}'
+PREDEFINED_OFFSET_SOL=-1.0
+PREDEFINED_OFFSET_BTC=0.05
 ```
 
 ### 5. Advanced Safety & Monitoring
@@ -161,8 +162,10 @@ TIMEOUT_MINUTES=20            # Order timeout before forced market close
 CHECK_INTERVAL_SECONDS=60     # Main loop interval
 
 # ===== External Hedge Adjustment (Optional) =====
-# Adjust for hedges on other platforms
-PREDEFINED_OFFSET='{"SOL": -1.0, "BTC": 0.05}'
+# Adjust for hedges on other platforms (use separate variables)
+PREDEFINED_OFFSET_SOL=-1.0
+PREDEFINED_OFFSET_BTC=0.05
+PREDEFINED_OFFSET_ETH=0.0
 
 # ===== Initial Position Offset (Optional) =====
 # If you have existing positions from before the system started
