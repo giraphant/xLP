@@ -37,6 +37,7 @@ from core.metrics import MetricsCollector
 from core.pipeline import (
     HedgePipeline,
     PipelineContext,
+    create_hedge_pipeline,
     FetchPoolDataStep,
     CalculateIdealHedgesStep,
     FetchMarketDataStep,
@@ -47,6 +48,8 @@ from core.pipeline import (
     timing_middleware,
     error_collection_middleware
 )
+from core.decision_engine import DecisionEngine, TradingAction, ActionType
+from core.action_executor import ActionExecutor, ExecutionResult
 from pools import jlp, alp
 
 logger = logging.getLogger(__name__)
@@ -82,8 +85,20 @@ class HedgeEngine:
         self.exchange = create_exchange(self.config["exchange"])
         self.notifier = Notifier(self.config["pushover"])
 
-        # 初始化数据管道（可选，用于新的处理流程）
-        self.pipeline = self._create_pipeline()
+        # 初始化决策引擎
+        self.decision_engine = DecisionEngine(self.config, self.state_manager)
+
+        # 初始化操作执行器
+        self.action_executor = ActionExecutor(
+            exchange=self.exchange,
+            state_manager=self.state_manager,
+            notifier=self.notifier,
+            metrics_collector=self.metrics,
+            circuit_manager=self.circuit_manager
+        )
+
+        # 创建完整的数据处理管道
+        self.pipeline = self._create_full_pipeline()
 
     def _load_config(self) -> dict:
         """
@@ -140,17 +155,23 @@ class HedgeEngine:
 
         return config
 
-    def _create_pipeline(self) -> HedgePipeline:
-        """创建数据处理管道"""
-        pipeline = HedgePipeline()
+    def _create_full_pipeline(self) -> HedgePipeline:
+        """创建完整的数据处理管道"""
+        # 准备池子计算器
+        pool_calculators = {
+            "jlp": jlp.calculate_hedge,
+            "alp": alp.calculate_hedge
+        }
 
-        # 添加中间件
-        pipeline.add_middleware(logging_middleware)
-        pipeline.add_middleware(timing_middleware)
-        pipeline.add_middleware(error_collection_middleware)
-
-        # 注意：这里只是创建管道结构，实际使用时需要根据需求配置步骤
-        return pipeline
+        # 使用工厂函数创建管道
+        return create_hedge_pipeline(
+            pool_calculators=pool_calculators,
+            exchange=self.exchange,
+            state_manager=self.state_manager,
+            offset_calculator=calculate_offset_and_cost,
+            decision_engine=self.decision_engine,
+            action_executor=self.action_executor
+        )
 
     def _validate_config(self):
         """验证配置完整性和合理性"""
@@ -471,8 +492,96 @@ class HedgeEngine:
         # 保存状态
         await self.state_manager.save_state()
 
+    async def run_once_pipeline(self):
+        """使用管道执行一次完整的对冲检查循环"""
+        start_time = time.time()
+        logger.info(f"{'='*60}")
+        logger.info(f"Pipeline execution started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info(f"{'='*60}")
+
+        try:
+            # 准备管道上下文
+            context = PipelineContext(
+                config={
+                    **self.config,
+                    "jlp": {"amount": self.config["jlp_amount"]},
+                    "alp": {"amount": self.config["alp_amount"]}
+                }
+            )
+
+            # 执行管道
+            context = await self.pipeline.execute(context)
+
+            # 处理管道结果
+            if context.results:
+                success_count = sum(1 for r in context.results if r.status.value == "success")
+                failed_count = sum(1 for r in context.results if r.status.value == "failed")
+
+                logger.info(f"Pipeline completed: {success_count} successful steps, {failed_count} failed steps")
+
+                # 检查是否有关键步骤失败
+                critical_failures = [
+                    r for r in context.results
+                    if r.status.value == "failed" and r.name in ["FetchPoolData", "CalculateIdealHedges"]
+                ]
+
+                if critical_failures:
+                    logger.error(f"Critical steps failed: {[f.name for f in critical_failures]}")
+                    raise HedgeEngineError("Critical pipeline steps failed")
+
+            # 更新元数据
+            await self.state_manager.update_metadata({
+                "last_check": datetime.now().isoformat(),
+                "total_runs": (await self.state_manager.get_metadata()).get("total_runs", 0) + 1
+            })
+
+            # 清理超时的订单监控
+            await self.state_manager.cleanup_stale_orders()
+
+            # 保存状态
+            await self.state_manager.save_state()
+
+            # 清理空闲的熔断器
+            self.circuit_manager.cleanup_idle()
+
+            # 记录处理时间指标
+            processing_time = time.time() - start_time
+            await self.metrics.record_processing("pipeline_run", processing_time)
+
+            # 定期导出指标摘要（每10次运行）
+            total_runs = (await self.state_manager.get_metadata()).get("total_runs", 0)
+            if total_runs % 10 == 0:
+                summary = await self.metrics.export_summary()
+                logger.info(f"Metrics Summary: {json.dumps(summary, indent=2)}")
+
+            logger.info(f"Pipeline execution completed in {processing_time:.2f}s")
+
+        except Exception as e:
+            logger.error(f"Pipeline execution error: {e}")
+            # 记录错误指标
+            self.metrics.record_error(type(e).__name__, str(e))
+
+            # 记录最后的错误
+            await self.state_manager.update_metadata({
+                "last_error": str(e),
+                "last_error_time": datetime.now().isoformat()
+            })
+            raise
+
     async def run_once(self):
-        """执行一次检查循环（带错误处理和指标记录）"""
+        """执行一次检查循环 - 根据配置选择管道模式或传统模式"""
+        # 检查是否使用管道模式（默认使用新的管道模式）
+        use_pipeline = os.getenv("USE_PIPELINE", "true").lower() in ("true", "1", "yes")
+
+        if use_pipeline:
+            logger.info("Using pipeline mode for execution")
+            return await self.run_once_pipeline()
+        else:
+            logger.info("Using traditional mode for execution")
+            return await self.run_once_traditional()
+
+    async def run_once_traditional(self):
+        """传统模式执行一次检查循环（保留向后兼容）"""
         start_time = time.time()
         logger.info(f"{'='*60}")
         logger.info(f"检查时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
