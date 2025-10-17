@@ -323,6 +323,9 @@ class LighterClient:
         market_id = await self.get_market_id(symbol)
         market_info = await self.get_market_info(symbol)
 
+        # Save original size for USD calculation (before conversion)
+        original_size = size
+
         # Convert size for 1000X markets (e.g., 1000BONK)
         size = self._convert_1000x_size(symbol, size, to_lighter=True)
 
@@ -338,8 +341,9 @@ class LighterClient:
         logger.info(f"  BaseAmount (integer): {base_amount}")
         logger.info(f"  Price: ${price:.2f}, Price int: {price_int}")
 
-        # Calculate order value in USD
-        order_value_usd = size * price
+        # Calculate order value in USD using ORIGINAL size (before 1000X conversion)
+        # Because price is per single token, not per 1000 tokens
+        order_value_usd = original_size * price
         logger.info(f"  Order value: ${order_value_usd:.2f}")
 
         # Check minimum order size
