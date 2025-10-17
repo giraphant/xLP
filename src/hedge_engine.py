@@ -136,6 +136,41 @@ class HedgeEngine:
 
         return result
 
+    async def calculate_pool_value(self, pool_type: str, amount: float, prices: Dict[str, float]) -> float:
+        """
+        计算JLP或ALP的总USD价值（包括所有资产，含稳定币）
+
+        Args:
+            pool_type: "jlp" 或 "alp"
+            amount: JLP或ALP数量
+            prices: 价格字典（已获取的价格）
+
+        Returns:
+            总USD价值
+        """
+        if pool_type == "jlp":
+            positions = await jlp_hedge.calculate_hedge(amount)
+        elif pool_type == "alp":
+            positions = await alp_hedge.calculate_hedge(amount)
+        else:
+            return 0.0
+
+        total_value = 0.0
+        for symbol, data in positions.items():
+            asset_amount = data["amount"]
+
+            # 获取价格
+            if symbol == "WBTC":
+                price = prices.get("BTC", 0)
+            elif symbol in ["USDC", "USDT"]:
+                price = 1.0  # 稳定币价格
+            else:
+                price = prices.get(symbol, 0)
+
+            total_value += abs(asset_amount) * price
+
+        return total_value
+
 
     def get_zone(self, offset_pct: float) -> Optional[int]:
         """
@@ -190,7 +225,7 @@ class HedgeEngine:
         symbol: str,
         ideal_position: float,
         current_price: float,
-        total_hedge_value: float
+        total_portfolio_value: float
     ):
         """
         处理单个币种的对冲逻辑
@@ -199,7 +234,7 @@ class HedgeEngine:
             symbol: 币种符号
             ideal_position: 理想持仓
             current_price: 当前价格
-            total_hedge_value: 总对冲价值（USD）
+            total_portfolio_value: JLP+ALP总组合价值（USD）
         """
         state = self.state["symbols"][symbol]
 
@@ -220,9 +255,9 @@ class HedgeEngine:
         state["cost_basis"] = new_cost
         state["last_updated"] = datetime.now().isoformat()
 
-        # 计算偏移USD价值百分比
+        # 计算偏移USD价值百分比（相对于总组合价值）
         offset_usd = abs(new_offset) * current_price
-        offset_pct = (offset_usd / total_hedge_value) * 100 if total_hedge_value > 0 else 0
+        offset_pct = (offset_usd / total_portfolio_value) * 100 if total_portfolio_value > 0 else 0
 
         # 判断区间
         new_zone = self.get_zone(offset_pct)
@@ -326,21 +361,26 @@ class HedgeEngine:
             alp_amount = alp_hedges.get(symbol, 0.0)
             merged_hedges[symbol] = jlp_amount + alp_amount
 
-        # 3. 计算总对冲价值
-        total_hedge_value = 0.0
+        # 3. 获取所有需要的价格
         prices = {}
-        for symbol, ideal_pos in merged_hedges.items():
+        for symbol in merged_hedges.keys():
             price = await self.exchange.get_price(symbol)
             prices[symbol] = price
-            total_hedge_value += abs(ideal_pos) * price
 
-        print(f"总对冲价值: ${total_hedge_value:,.2f}")
+        # 4. 计算JLP+ALP的总组合价值（包括稳定币）
+        jlp_value = await self.calculate_pool_value("jlp", self.config["jlp_amount"], prices)
+        alp_value = await self.calculate_pool_value("alp", self.config["alp_amount"], prices)
+        total_portfolio_value = jlp_value + alp_value
+
+        print(f"JLP总价值: ${jlp_value:,.2f}")
+        print(f"ALP总价值: ${alp_value:,.2f}")
+        print(f"组合总价值: ${total_portfolio_value:,.2f}")
         print()
 
-        # 4. 统一处理每个币种
+        # 5. 统一处理每个币种
         for symbol, ideal_pos in merged_hedges.items():
             current_price = prices[symbol]
-            await self.process_symbol(symbol, ideal_pos, current_price, total_hedge_value)
+            await self.process_symbol(symbol, ideal_pos, current_price, total_portfolio_value)
 
         self.state["last_check"] = datetime.now().isoformat()
         self._save_state()
