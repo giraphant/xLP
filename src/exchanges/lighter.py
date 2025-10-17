@@ -68,6 +68,14 @@ class LighterClient:
         """Initialize the Lighter SignerClient and AccountApi"""
         if self.client is None:
             try:
+                # Log initialization parameters (mask private key)
+                masked_key = self.private_key[:6] + "..." + self.private_key[-4:] if len(self.private_key) > 10 else "***"
+                logger.info(f"Initializing Lighter client with:")
+                logger.info(f"  - base_url: {self.base_url}")
+                logger.info(f"  - private_key: {masked_key}")
+                logger.info(f"  - account_index: {self.account_index}")
+                logger.info(f"  - api_key_index: {self.api_key_index}")
+
                 # Initialize SignerClient for trading operations
                 self.client = SignerClient(
                     url=self.base_url,
@@ -81,11 +89,20 @@ class LighterClient:
                 self.api_client = ApiClient(configuration=config)
                 self.account_api = AccountApi(self.api_client)
 
-                # Skip check_client() due to SDK bug with sub-accounts
-                # The SDK has issues validating sub-accounts and non-zero api_key_index
-                # Instead, we'll verify by making a simple API call
-                logger.info(f"Lighter client initialized (account_index={self.account_index}, api_key_index={self.api_key_index})")
-                logger.warning("Skipping check_client() due to known SDK issue with sub-accounts")
+                # Try check_client() - it may be necessary for API key validation
+                logger.info("Calling check_client() to validate API key...")
+                try:
+                    err = self.client.check_client()
+                    if err is not None:
+                        logger.error(f"check_client() returned error: {err}")
+                        # Don't raise - continue and let actual API calls fail with better error messages
+                    else:
+                        logger.info("check_client() successful - API key validated")
+                except Exception as check_err:
+                    logger.warning(f"check_client() failed: {check_err}")
+                    logger.warning("Continuing anyway - will validate on first API call")
+
+                logger.info(f"Lighter client initialized successfully")
 
             except Exception as e:
                 logger.error(f"Failed to initialize Lighter client: {e}")
@@ -332,16 +349,28 @@ class LighterClient:
                 'trigger_price': 0,
             }
 
+            logger.info(f"Creating order with params:")
+            logger.info(f"  - symbol: {symbol}")
+            logger.info(f"  - market_id: {market_id}")
+            logger.info(f"  - side: {side} (is_ask={is_ask})")
+            logger.info(f"  - size: {size} (base_amount={base_amount})")
+            logger.info(f"  - price: {price} (price_int={price_int})")
+            logger.info(f"  - client_order_index: {client_order_index}")
+
             order_result, tx_hash, error = await self.client.create_order(**order_params)
 
             if error:
+                logger.error(f"Order creation returned error: {error}")
+                logger.error(f"Error details - code: {getattr(error, 'code', 'N/A')}, message: {getattr(error, 'message', str(error))}")
                 raise Exception(f"Order creation failed: {error}")
 
-            logger.info(f"Limit order placed: {side} {size} @ {price}, tx: {tx_hash}")
+            logger.info(f"Limit order placed successfully: {side} {size} @ {price}, tx: {tx_hash}")
             return str(order_result.order_id) if order_result else tx_hash
 
         except Exception as e:
             logger.error(f"Failed to place limit order: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             raise
 
     async def place_market_order(
