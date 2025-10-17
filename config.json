@@ -1,0 +1,29 @@
+{
+  "jlp_amount": 50000,
+  "alp_amount": 10000,
+  "threshold_min": 1.0,
+  "threshold_max": 2.0,
+  "threshold_step": 0.2,
+  "order_price_offset": 0.2,
+  "close_ratio": 40.0,
+  "timeout_minutes": 20,
+  "check_interval_seconds": 60,
+  "initial_offset": {
+    "SOL": 0.0,
+    "ETH": 0.0,
+    "BTC": 0.0,
+    "BONK": 0.0
+  },
+  "exchange": {
+    "name": "mock",
+    "api_key": "",
+    "api_secret": "",
+    "testnet": false
+  },
+  "pushover": {
+    "user_key": "",
+    "api_token": "",
+    "enabled": true
+  },
+  "rpc_url": "https://api.mainnet-beta.solana.com"
+}

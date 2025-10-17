@@ -1,0 +1,49 @@
+{
+  "symbols": {
+    "SOL": {
+      "offset": 0.0,
+      "cost_basis": 0.0,
+      "last_updated": null,
+      "monitoring": {
+        "active": false,
+        "started_at": null,
+        "current_zone": null,
+        "order_id": null
+      }
+    },
+    "ETH": {
+      "offset": 0.0,
+      "cost_basis": 0.0,
+      "last_updated": null,
+      "monitoring": {
+        "active": false,
+        "started_at": null,
+        "current_zone": null,
+        "order_id": null
+      }
+    },
+    "BTC": {
+      "offset": 0.0,
+      "cost_basis": 0.0,
+      "last_updated": null,
+      "monitoring": {
+        "active": false,
+        "started_at": null,
+        "current_zone": null,
+        "order_id": null
+      }
+    },
+    "BONK": {
+      "offset": 0.0,
+      "cost_basis": 0.0,
+      "last_updated": null,
+      "monitoring": {
+        "active": false,
+        "started_at": null,
+        "current_zone": null,
+        "order_id": null
+      }
+    }
+  },
+  "last_check": null
+}
