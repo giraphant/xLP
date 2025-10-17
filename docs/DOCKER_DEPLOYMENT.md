@@ -16,9 +16,9 @@ nano .env
 ```env
 # Lighter Exchange
 EXCHANGE_NAME=lighter
-EXCHANGE_API_KEY=your_api_key_here
-EXCHANGE_API_SECRET=your_api_secret_here
-EXCHANGE_TESTNET=true
+EXCHANGE_PRIVATE_KEY=your_lighter_private_key_here
+EXCHANGE_ACCOUNT_INDEX=0
+EXCHANGE_API_KEY_INDEX=0
 
 # Pushover
 PUSHOVER_USER_KEY=your_user_key
@@ -79,9 +79,10 @@ docker-compose logs -f hedge-engine
 ```bash
 # Exchange
 EXCHANGE_NAME=lighter|mock
-EXCHANGE_API_KEY=xxx
-EXCHANGE_API_SECRET=xxx
-EXCHANGE_TESTNET=true|false
+EXCHANGE_PRIVATE_KEY=xxx
+EXCHANGE_ACCOUNT_INDEX=0
+EXCHANGE_API_KEY_INDEX=0
+EXCHANGE_BASE_URL=https://mainnet.zklighter.elliot.ai
 
 # Pushover
 PUSHOVER_USER_KEY=xxx
