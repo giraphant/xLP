@@ -1,0 +1,46 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info
+dist
+build
+venv
+env
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Test files
+tests/
+*.test.py
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# Deployment specific
+.env
+.env.*
+!.env.example
+data/
+logs/
+state.json
+
+# Old development directory
+solana-lp-hedge/
+
+# CI/CD
+.github/

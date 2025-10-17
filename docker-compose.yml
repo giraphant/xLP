@@ -1,0 +1,54 @@
+version: '3.8'
+
+services:
+  hedge-engine:
+    build: .
+    container_name: xlp-hedge-engine
+    restart: unless-stopped
+
+    # 环境变量（从.env文件加载）
+    env_file:
+      - .env
+
+    # 或者直接在这里设置
+    environment:
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - CHECK_INTERVAL_SECONDS=${CHECK_INTERVAL_SECONDS:-60}
+
+    # 持久化存储
+    volumes:
+      # 状态文件持久化
+      - ./data:/app/data
+      # 日志持久化（可选）
+      - ./logs:/app/logs
+      # 配置文件（可以动态修改）
+      - ./config.json:/app/config.json:ro
+
+    # 日志配置
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # 健康检查
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json; json.load(open('/app/data/state.json'))"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # 可选：监控服务（未来扩展）
+  # prometheus:
+  #   image: prom/prometheus:latest
+  #   container_name: xlp-prometheus
+  #   volumes:
+  #     - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+  #     - prometheus-data:/prometheus
+  #   ports:
+  #     - "9090:9090"
+
+# volumes:
+#   prometheus-data:
