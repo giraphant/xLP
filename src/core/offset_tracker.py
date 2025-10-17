@@ -4,6 +4,7 @@
 提供加权平均成本追踪的核心算法
 """
 
+import math
 from typing import Tuple
 
 
@@ -38,7 +39,22 @@ def calculate_offset_and_cost(
         new_cost_basis:
             偏移敞口的加权平均成本
             用于计算盈亏和设置平仓价格
+
+    Raises:
+        ValueError: 输入参数无效（价格非正、包含NaN/Infinity、成本为负）
     """
+    # 0. 输入验证
+    if current_price <= 0:
+        raise ValueError(f"Invalid current_price: {current_price} (must be positive)")
+
+    if old_cost < 0:
+        raise ValueError(f"Invalid old_cost: {old_cost} (must be non-negative)")
+
+    # 检查所有输入是否为有限数值
+    if not all(math.isfinite(x) for x in [ideal_position, actual_position, current_price, old_offset, old_cost]):
+        raise ValueError(f"Non-finite input detected: ideal={ideal_position}, actual={actual_position}, "
+                        f"price={current_price}, old_offset={old_offset}, old_cost={old_cost}")
+
     # 1. 计算新偏移
     new_offset = actual_position - ideal_position
     delta_offset = new_offset - old_offset
@@ -65,5 +81,11 @@ def calculate_offset_and_cost(
     #   - delta < 0 且同向：缩小敞口，成本不变（已实现盈亏分离）
     #   - 反向（越过零点）：delta和new_offset符号导致重新计价
     new_cost = (old_offset * old_cost + delta_offset * current_price) / new_offset
+
+    # 4. 输出验证（可选但推荐）
+    if new_cost < 0:
+        raise ValueError(f"Calculated negative cost: {new_cost}. Inputs: old_offset={old_offset}, "
+                        f"old_cost={old_cost}, delta_offset={delta_offset}, current_price={current_price}, "
+                        f"new_offset={new_offset}")
 
     return new_offset, new_cost
