@@ -4,11 +4,8 @@ Lighter Exchange Integration
 Based on: https://github.com/your-quantguy/perp-dex-tools
 """
 
-import os
 import time
-import asyncio
 import logging
-from decimal import Decimal
 from typing import Dict, Optional
 
 from lighter import SignerClient, ApiClient, Configuration, AccountApi
@@ -204,26 +201,19 @@ class LighterClient:
         try:
             # Get numeric market ID
             market_id = await self.get_market_id(symbol)
-            logger.debug(f"[get_position] Looking for {symbol} with market_id={market_id}")
 
             # Get account data using AccountApi
-            # Query by account index
             response = await self.account_api.account(
                 by="index",
                 value=str(self.account_index)
             )
 
-            logger.debug(f"[get_position] Account response: {response}")
-
-            # Response has .accounts array, we need the first account
             # Response structure: {accounts: [DetailedAccount{..., positions: [...]}]}
             if response and hasattr(response, 'accounts') and len(response.accounts) > 0:
                 account = response.accounts[0]
 
                 if hasattr(account, 'positions'):
-                    logger.debug(f"[get_position] Found {len(account.positions)} positions")
                     for position in account.positions:
-                        logger.debug(f"[get_position] Position: market_id={position.market_id}, symbol={position.symbol}, position={position.position}")
                         if position.market_id == market_id:
                             # Position is already in decimal format (e.g., "1.000")
                             pos = float(position.position)
@@ -235,14 +225,7 @@ class LighterClient:
                             # Convert for 1000X markets (e.g., 1000BONK)
                             pos = self._convert_1000x_size(symbol, pos, to_lighter=False)
 
-                            logger.info(f"[get_position] {symbol}: raw_position={position.position}, sign={position.sign}, converted={pos}")
                             return pos
-
-                    logger.warning(f"[get_position] No position found for {symbol} (market_id={market_id})")
-                else:
-                    logger.warning(f"[get_position] Account has no positions attribute")
-            else:
-                logger.warning(f"[get_position] Invalid response or no accounts found")
 
             return 0.0
 
