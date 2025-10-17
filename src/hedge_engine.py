@@ -78,7 +78,7 @@ class HedgeEngine:
         }
 
         # 使用工厂函数创建管道
-        return create_hedge_pipeline(
+        pipeline = create_hedge_pipeline(
             pool_calculators=pool_calculators,
             exchange=self.exchange,
             state_manager=self.state_manager,
@@ -86,6 +86,15 @@ class HedgeEngine:
             decision_engine=self.decision_engine,
             action_executor=self.action_executor
         )
+
+        # 注入详细报告 middleware（如果启用）
+        # 通过环境变量控制是否启用详细报告
+        import os
+        if os.getenv("ENABLE_DETAILED_REPORTS", "true").lower() in ("true", "1", "yes"):
+            from core.reporting import detailed_reporting_middleware
+            pipeline.add_middleware(detailed_reporting_middleware)
+
+        return pipeline
 
     async def run_once_pipeline(self):
         """使用管道执行一次完整的对冲检查循环"""
@@ -103,6 +112,9 @@ class HedgeEngine:
                     "alp": {"amount": self.config["alp_amount"]}
                 }
             )
+
+            # 为 reporting middleware 提供 state_manager
+            context.metadata["state_manager"] = self.state_manager
 
             # 执行管道
             context = await self.pipeline.execute(context)
