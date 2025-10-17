@@ -30,46 +30,40 @@ class HedgeBot:
         # 获取检查间隔
         interval = self.engine.config["check_interval_seconds"]
 
-        while self.running:
-            try:
-                await self.engine.run_once()
+        try:
+            while self.running:
+                try:
+                    await self.engine.run_once()
 
-                if self.running:
-                    print(f"\n等待 {interval} 秒...\n")
-                    await asyncio.sleep(interval)
+                    if self.running:
+                        print(f"\n等待 {interval} 秒...\n")
+                        await asyncio.sleep(interval)
 
-            except KeyboardInterrupt:
-                print("\n\n收到中断信号，正在退出...")
-                self.running = False
-                break
+                except Exception as e:
+                    print(f"\n❌ 发生错误: {e}")
+                    import traceback
+                    traceback.print_exc()
 
-            except Exception as e:
-                print(f"\n❌ 发生错误: {e}")
-                import traceback
-                traceback.print_exc()
+                    # 错误后等待一段时间再重试
+                    if self.running:
+                        print(f"\n等待 {interval} 秒后重试...\n")
+                        await asyncio.sleep(interval)
 
-                # 错误后等待一段时间再重试
-                if self.running:
-                    print(f"\n等待 {interval} 秒后重试...\n")
-                    await asyncio.sleep(interval)
+        except KeyboardInterrupt:
+            print("\n\n收到中断信号，正在退出...")
 
         print("\n对冲引擎已停止")
 
-    def stop(self):
-        """停止运行"""
-        self.running = False
-
 
 def signal_handler(signum, frame):
-    """处理信号"""
-    print("\n\n收到停止信号，正在退出...")
+    """处理SIGTERM信号（Docker/systemd停止）"""
+    print("\n\n收到停止信号（SIGTERM），正在退出...")
     sys.exit(0)
 
 
 async def main():
     """主函数"""
-    # 注册信号处理
-    signal.signal(signal.SIGINT, signal_handler)
+    # 只注册SIGTERM处理（SIGINT由KeyboardInterrupt处理）
     signal.signal(signal.SIGTERM, signal_handler)
 
     # 创建并运行机器人
@@ -77,8 +71,6 @@ async def main():
 
     try:
         await bot.run()
-    except KeyboardInterrupt:
-        print("\n\n程序已停止")
     except Exception as e:
         print(f"\n❌ 致命错误: {e}")
         import traceback
@@ -87,8 +79,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("\n程序已停止")
-        sys.exit(0)
+    asyncio.run(main())
