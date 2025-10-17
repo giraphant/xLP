@@ -16,6 +16,25 @@ from core.exceptions import HedgeEngineError, classify_exception
 
 logger = logging.getLogger(__name__)
 
+# Export key classes for external use
+__all__ = [
+    'HedgePipeline',
+    'PipelineContext',
+    'PipelineStep',
+    'StepResult',
+    'StepStatus',
+    'create_hedge_pipeline',
+    'FetchPoolDataStep',
+    'CalculateIdealHedgesStep',
+    'FetchMarketDataStep',
+    'CalculateOffsetsStep',
+    'DecideActionsStep',
+    'ExecuteActionsStep',
+    'logging_middleware',
+    'timing_middleware',
+    'error_collection_middleware'
+]
+
 
 class StepStatus(Enum):
     """步骤执行状态"""
@@ -385,7 +404,7 @@ class CalculateOffsetsStep(PipelineStep):
 
 
 class DecideActionsStep(PipelineStep):
-    """决策步骤 - 决定需要执行的操作"""
+    """决策步骤 - 使用决策引擎决定需要执行的操作"""
 
     def __init__(self, decision_engine):
         super().__init__(
@@ -396,24 +415,28 @@ class DecideActionsStep(PipelineStep):
         )
         self.decision_engine = decision_engine
 
-    async def _run(self, context: PipelineContext) -> List[Dict[str, Any]]:
-        """根据偏移量决定操作"""
-        actions = []
+    async def _run(self, context: PipelineContext) -> List[Any]:
+        """根据市场数据决定操作"""
+        # 准备决策数据
+        market_data = {}
 
         for symbol, (offset, cost_basis) in context.offsets.items():
             if symbol not in context.prices:
+                logger.warning(f"Skipping {symbol} - no price data")
                 continue
 
             current_price = context.prices[symbol]
             offset_usd = abs(offset) * current_price
 
-            # 使用决策引擎判断
-            action = await self.decision_engine.decide(
-                symbol, offset, cost_basis, current_price, offset_usd
-            )
+            market_data[symbol] = {
+                "offset": offset,
+                "cost_basis": cost_basis,
+                "current_price": current_price,
+                "offset_usd": offset_usd
+            }
 
-            if action:
-                actions.append(action)
+        # 批量决策
+        actions = await self.decision_engine.batch_decide(market_data)
 
         context.actions = actions
         logger.info(f"Decided on {len(actions)} actions")
@@ -421,39 +444,84 @@ class DecideActionsStep(PipelineStep):
 
 
 class ExecuteActionsStep(PipelineStep):
-    """执行操作步骤"""
+    """执行操作步骤 - 使用操作执行器执行所有决策"""
 
-    def __init__(self, executor):
+    def __init__(self, action_executor):
         super().__init__(
             name="ExecuteActions",
             required=False,  # 执行失败不停止管道
             retry_times=1,
             timeout=60
         )
-        self.executor = executor
+        self.action_executor = action_executor
 
-    async def _run(self, context: PipelineContext) -> List[Dict[str, Any]]:
+    async def _run(self, context: PipelineContext) -> List[Any]:
         """执行所有决定的操作"""
-        results = []
+        if not context.actions:
+            logger.info("No actions to execute")
+            return []
 
-        for action in context.actions:
-            try:
-                result = await self.executor.execute(action)
-                results.append({
-                    "action": action,
-                    "result": result,
-                    "status": "success"
-                })
-            except Exception as e:
-                logger.error(f"Failed to execute action {action}: {e}")
-                results.append({
-                    "action": action,
-                    "error": str(e),
-                    "status": "failed"
-                })
+        # 使用执行器批量执行
+        # 注意：这里使用串行执行以避免竞态条件
+        results = await self.action_executor.batch_execute(
+            context.actions,
+            parallel=False
+        )
 
-        logger.info(f"Executed {len(results)} actions")
+        # 统计执行结果
+        success_count = sum(1 for r in results if r.success)
+        failed_count = len(results) - success_count
+
+        logger.info(f"Executed {len(results)} actions: "
+                   f"{success_count} success, {failed_count} failed")
+
+        # 将结果存入上下文
+        context.metadata["execution_results"] = results
+        context.metadata["execution_stats"] = self.action_executor.get_stats()
+
         return results
+
+
+# ==================== 管道工厂 ====================
+
+def create_hedge_pipeline(
+    pool_calculators: Dict[str, Any],
+    exchange,
+    state_manager,
+    offset_calculator,
+    decision_engine,
+    action_executor
+) -> HedgePipeline:
+    """
+    创建完整的对冲处理管道
+
+    Args:
+        pool_calculators: 池子计算器字典
+        exchange: 交易所接口
+        state_manager: 状态管理器
+        offset_calculator: 偏移计算函数
+        decision_engine: 决策引擎
+        action_executor: 操作执行器
+
+    Returns:
+        配置好的管道实例
+    """
+    pipeline = HedgePipeline()
+
+    # 添加中间件
+    pipeline.add_middleware(logging_middleware)
+    pipeline.add_middleware(timing_middleware)
+    pipeline.add_middleware(error_collection_middleware)
+
+    # 添加处理步骤
+    pipeline.add_step(FetchPoolDataStep(pool_calculators))
+    pipeline.add_step(CalculateIdealHedgesStep())
+    pipeline.add_step(FetchMarketDataStep(exchange))
+    pipeline.add_step(CalculateOffsetsStep(offset_calculator, state_manager))
+    pipeline.add_step(DecideActionsStep(decision_engine))
+    pipeline.add_step(ExecuteActionsStep(action_executor))
+
+    return pipeline
 
 
 # ==================== 中间件 ====================
