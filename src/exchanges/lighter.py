@@ -320,6 +320,17 @@ class LighterClient:
         base_amount = int(size * market_info["base_multiplier"])
         price_int = int(price * market_info["price_multiplier"])
 
+        # Log order details for debugging
+        logger.info(f"📝 Limit Order calculation for {symbol}:")
+        logger.info(f"  Size: {size:.8f} {symbol}")
+        logger.info(f"  Base multiplier: {market_info['base_multiplier']} (decimals: {market_info['size_decimals']})")
+        logger.info(f"  BaseAmount (integer): {base_amount}")
+        logger.info(f"  Price: ${price:.2f}, Price int: {price_int}")
+
+        # Check minimum order size
+        if base_amount < 1:
+            raise ValueError(f"Order size too small: {size:.8f} {symbol} (BaseAmount={base_amount}, minimum is 1)")
+
         # Generate client order ID
         client_order_index = int(time.time() * 1000) % 1000000
 
