@@ -41,6 +41,7 @@ class LighterClient:
         self.base_url = base_url
         self.client: Optional[SignerClient] = None
         self.market_info = {}  # Cache market information
+        self.symbol_to_market_id = {}  # Map symbol (SOL_USDC) to market_id (int)
 
     async def initialize(self):
         """Initialize the Lighter SignerClient"""
@@ -63,51 +64,80 @@ class LighterClient:
                 logger.error(f"Failed to initialize Lighter client: {e}")
                 raise
 
-    async def get_market_info(self, market_id: str) -> Dict:
-        """
-        Get market information and cache it
+    async def _load_markets(self):
+        """Load all markets and build symbol-to-ID mapping"""
+        if self.symbol_to_market_id:
+            return  # Already loaded
 
-        Args:
-            market_id: Market identifier (e.g., "BTC_USDC", "SOL_USDC")
+        if self.client is None:
+            await self.initialize()
 
-        Returns:
-            Market info with decimals
-        """
-        if market_id not in self.market_info:
-            if self.client is None:
-                await self.initialize()
-
-            # Get market metadata from order_api
+        try:
+            # Get all available markets
             markets = await self.client.order_api.order_books()
 
             for market in markets:
-                if market.market_id == market_id:
-                    self.market_info[market_id] = {
+                # market.market_id is the integer ID
+                # market.symbol or market.name should be the string identifier
+                symbol = getattr(market, 'symbol', getattr(market, 'name', None))
+
+                if symbol:
+                    self.symbol_to_market_id[symbol] = market.market_id
+                    self.market_info[market.market_id] = {
+                        "symbol": symbol,
                         "size_decimals": market.size_decimals,
                         "price_decimals": market.price_decimals,
                         "base_multiplier": 10 ** market.size_decimals,
                         "price_multiplier": 10 ** market.price_decimals,
                     }
-                    break
 
-            # If not found, use defaults
-            if market_id not in self.market_info:
-                logger.warning(f"Market {market_id} not found, using default decimals")
-                self.market_info[market_id] = {
-                    "size_decimals": 9,
-                    "price_decimals": 6,
-                    "base_multiplier": 10 ** 9,
-                    "price_multiplier": 10 ** 6,
-                }
+            logger.info(f"Loaded {len(self.symbol_to_market_id)} markets from Lighter")
+
+        except Exception as e:
+            logger.error(f"Failed to load markets: {e}")
+            raise
+
+    async def get_market_id(self, symbol: str) -> int:
+        """
+        Get numeric market ID from symbol
+
+        Args:
+            symbol: Market symbol (e.g., "SOL_USDC", "BTC_USDC")
+
+        Returns:
+            Numeric market ID
+        """
+        if not self.symbol_to_market_id:
+            await self._load_markets()
+
+        if symbol not in self.symbol_to_market_id:
+            raise ValueError(f"Market {symbol} not found on Lighter")
+
+        return self.symbol_to_market_id[symbol]
+
+    async def get_market_info(self, symbol: str) -> Dict:
+        """
+        Get market information
+
+        Args:
+            symbol: Market symbol (e.g., "BTC_USDC", "SOL_USDC")
+
+        Returns:
+            Market info with decimals
+        """
+        market_id = await self.get_market_id(symbol)
+
+        if market_id not in self.market_info:
+            await self._load_markets()
 
         return self.market_info[market_id]
 
-    async def get_position(self, market_id: str) -> float:
+    async def get_position(self, symbol: str) -> float:
         """
         Get current position for a market
 
         Args:
-            market_id: Market identifier
+            symbol: Market symbol (e.g., "SOL_USDC")
 
         Returns:
             Position size (negative for short, positive for long)
@@ -116,6 +146,9 @@ class LighterClient:
             await self.initialize()
 
         try:
+            # Get numeric market ID
+            market_id = await self.get_market_id(symbol)
+
             # Get account positions using account_api
             positions = await self.client.account_api.account_positions(
                 auth_token=await self.client.create_auth_token()
@@ -125,21 +158,21 @@ class LighterClient:
                 for position in positions.positions:
                     if position.market_id == market_id:
                         # Position is in Lighter's integer format, need to convert
-                        market_info = await self.get_market_info(market_id)
+                        market_info = await self.get_market_info(symbol)
                         return float(position.position) / market_info["base_multiplier"]
 
             return 0.0
 
         except Exception as e:
-            logger.error(f"Failed to get position for {market_id}: {e}")
+            logger.error(f"Failed to get position for {symbol}: {e}")
             raise
 
-    async def get_price(self, market_id: str) -> float:
+    async def get_price(self, symbol: str) -> float:
         """
         Get current market price (mid price)
 
         Args:
-            market_id: Market identifier
+            symbol: Market symbol (e.g., "SOL_USDC")
 
         Returns:
             Current mid price
@@ -148,6 +181,10 @@ class LighterClient:
             await self.initialize()
 
         try:
+            # Get numeric market ID
+            market_id = await self.get_market_id(symbol)
+            market_info = await self.get_market_info(symbol)
+
             # Get order book using order_api
             orderbook = await self.client.order_api.order_book_orders(
                 market_id=market_id,
@@ -156,8 +193,9 @@ class LighterClient:
 
             if orderbook and hasattr(orderbook, 'bids') and hasattr(orderbook, 'asks'):
                 if orderbook.bids and orderbook.asks:
-                    best_bid = float(orderbook.bids[0]['price'])
-                    best_ask = float(orderbook.asks[0]['price'])
+                    # Prices are in integer format, convert to float
+                    best_bid = float(orderbook.bids[0]['price']) / market_info["price_multiplier"]
+                    best_ask = float(orderbook.asks[0]['price']) / market_info["price_multiplier"]
                     return (best_bid + best_ask) / 2
 
             # Fallback: try to get from recent trades
@@ -167,18 +205,18 @@ class LighterClient:
             )
 
             if trades and len(trades) > 0:
-                return float(trades[0]['price'])
+                return float(trades[0]['price']) / market_info["price_multiplier"]
 
-            logger.warning(f"No price data available for {market_id}")
+            logger.warning(f"No price data available for {symbol}")
             return 0.0
 
         except Exception as e:
-            logger.error(f"Failed to get price for {market_id}: {e}")
+            logger.error(f"Failed to get price for {symbol}: {e}")
             raise
 
     async def place_limit_order(
         self,
-        market_id: str,
+        symbol: str,
         side: str,
         size: float,
         price: float,
@@ -188,7 +226,7 @@ class LighterClient:
         Place a limit order
 
         Args:
-            market_id: Market identifier
+            symbol: Market symbol (e.g., "SOL_USDC")
             side: "buy" or "sell"
             size: Order size
             price: Limit price
@@ -200,8 +238,9 @@ class LighterClient:
         if self.client is None:
             await self.initialize()
 
-        # Get market info for decimal conversion
-        market_info = await self.get_market_info(market_id)
+        # Get market ID and info
+        market_id = await self.get_market_id(symbol)
+        market_info = await self.get_market_info(symbol)
 
         # Convert to Lighter's integer format
         is_ask = side.lower() == "sell"
@@ -213,7 +252,7 @@ class LighterClient:
 
         try:
             order_params = {
-                'market_index': market_id,
+                'market_index': market_id,  # Now using numeric ID
                 'client_order_index': client_order_index,
                 'base_amount': base_amount,
                 'price': price_int,
@@ -238,7 +277,7 @@ class LighterClient:
 
     async def place_market_order(
         self,
-        market_id: str,
+        symbol: str,
         side: str,
         size: float
     ) -> str:
@@ -246,7 +285,7 @@ class LighterClient:
         Place a market order (using IOC limit order at extreme price)
 
         Args:
-            market_id: Market identifier
+            symbol: Market symbol (e.g., "SOL_USDC")
             side: "buy" or "sell"
             size: Order size
 
@@ -254,7 +293,7 @@ class LighterClient:
             Order ID
         """
         # Get current market price
-        current_price = await self.get_price(market_id)
+        current_price = await self.get_price(symbol)
 
         # Use extreme price to ensure immediate execution
         if side.lower() == "buy":
@@ -264,19 +303,19 @@ class LighterClient:
 
         # Place IOC limit order
         return await self.place_limit_order(
-            market_id=market_id,
+            symbol=symbol,
             side=side,
             size=size,
             price=price,
             reduce_only=False
         )
 
-    async def cancel_order(self, market_id: str, order_id: str) -> bool:
+    async def cancel_order(self, symbol: str, order_id: str) -> bool:
         """
         Cancel an order
 
         Args:
-            market_id: Market identifier
+            symbol: Market symbol (e.g., "SOL_USDC")
             order_id: Order ID to cancel
 
         Returns:
@@ -286,6 +325,8 @@ class LighterClient:
             await self.initialize()
 
         try:
+            market_id = await self.get_market_id(symbol)
+
             cancel_result, tx_hash, error = await self.client.cancel_order(
                 market_index=market_id,
                 order_id=int(order_id)
@@ -301,12 +342,12 @@ class LighterClient:
             logger.error(f"Failed to cancel order {order_id}: {e}")
             return False
 
-    async def get_order_status(self, market_id: str, order_id: str) -> Dict:
+    async def get_order_status(self, symbol: str, order_id: str) -> Dict:
         """
         Get order status
 
         Args:
-            market_id: Market identifier
+            symbol: Market symbol (e.g., "SOL_USDC")
             order_id: Order ID
 
         Returns:
@@ -316,6 +357,9 @@ class LighterClient:
             await self.initialize()
 
         try:
+            market_id = await self.get_market_id(symbol)
+            market_info = await self.get_market_info(symbol)
+
             # Get active orders for the account
             auth_token = await self.client.create_auth_token()
             active_orders = await self.client.order_api.account_active_orders(
@@ -327,7 +371,6 @@ class LighterClient:
             if active_orders:
                 for order in active_orders:
                     if str(order.order_id) == str(order_id):
-                        market_info = await self.get_market_info(market_id)
                         return {
                             "status": "open",
                             "filled_size": float(order.filled_size or 0) / market_info["base_multiplier"],
