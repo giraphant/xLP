@@ -250,7 +250,7 @@ class HedgeEngine:
         current_zone = state["monitoring"]["current_zone"]
         is_monitoring = state["monitoring"]["active"]
 
-        print(f"{symbol}: offset={new_offset:.4f}, cost=${new_cost:.2f}, zone={new_zone}, offset_usd=${offset_usd:.2f}")
+        print(f"{symbol}: actual_pos={actual_position:.4f}, ideal_pos={ideal_position:.4f}, offset={new_offset:.4f}, cost=${new_cost:.2f}, zone={new_zone}, offset_usd=${offset_usd:.2f}")
 
         # 处理超阈值警报
         if new_zone == -1:
