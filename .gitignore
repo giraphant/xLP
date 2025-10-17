@@ -43,6 +43,13 @@ config.local.json
 
 # Logs
 *.log
+logs/
+
+# Docker
+.env
+data/
+*.env.local
+docker-compose.override.yml
 
 # OS
 .DS_Store
