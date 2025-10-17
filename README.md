@@ -17,38 +17,57 @@ This system automatically calculates ideal hedge positions from on-chain data an
 
 ```
 xLP/
-├── src/                        # Core source code
-│   ├── main.py                # Main loop entry
-│   ├── hedge_engine.py        # Core hedge engine
-│   ├── core/                  # Core utility modules
-│   │   └── offset_tracker.py # ⭐ Atomic cost tracking
-│   ├── pools/                 # LP pool calculators
-│   │   ├── jlp.py            # JLP pool hedge calculator
-│   │   └── alp.py            # ALP pool hedge calculator
-│   ├── exchanges/             # Exchange integrations
-│   │   ├── interface.py      # Exchange abstraction layer
-│   │   └── lighter.py        # Lighter exchange integration
-│   └── notifications/         # Notification modules
-│       └── pushover.py       # Pushover notifications
-├── tests/                     # Test suite
-│   ├── test_cost_tracking.py
-│   ├── test_cost_detailed.py
-│   └── test_10_steps.py
-├── docs/                      # Documentation
-│   ├── ARCHITECTURE.md
-│   ├── QUICKSTART.md
-│   ├── DOCKER_DEPLOYMENT.md
-│   └── PRODUCTION_CHECKLIST.md
-├── Dockerfile                 # Docker image
-├── docker-compose.yml         # One-command deployment
-├── .env.example              # Environment variables template
-├── config.json               # Configuration (optional)
-└── state_template.json       # State file template
+├── src/                           # Core source code
+│   ├── main.py                   # Main loop with error handling
+│   ├── hedge_engine.py           # Hedge engine orchestrator
+│   │
+│   ├── core/                     # 🎯 Core Business Logic
+│   │   ├── pipeline.py           # Data processing pipeline
+│   │   ├── decision_engine.py    # Trading decision logic
+│   │   ├── action_executor.py    # Order execution engine
+│   │   ├── offset_tracker.py     # ⭐ Atomic cost tracking
+│   │   ├── state_manager.py      # Position & order state
+│   │   └── exceptions.py         # Business exceptions
+│   │
+│   ├── utils/                    # 🔧 Utilities
+│   │   ├── config_validator.py   # Configuration validation
+│   │   ├── circuit_breaker.py    # Failure protection
+│   │   └── logging_utils.py      # Sensitive data masking
+│   │
+│   ├── monitoring/               # 📊 Observability
+│   │   ├── metrics.py            # Performance metrics
+│   │   └── reports.py            # Position reports & PnL
+│   │
+│   ├── pools/                    # LP pool calculators
+│   │   ├── jlp.py               # JLP pool hedge calculator
+│   │   └── alp.py               # ALP pool hedge calculator
+│   │
+│   ├── exchanges/                # Exchange integrations
+│   │   ├── interface.py         # Exchange abstraction
+│   │   └── lighter.py           # Lighter DEX integration
+│   │
+│   └── notifications/            # Alert system
+│       └── pushover.py          # Pushover notifications
+│
+├── tests/                        # Test suite
+├── docs/                         # Documentation
+├── Dockerfile                    # Container image
+├── docker-compose.yml            # One-command deployment
+├── .env.example                 # Environment template
+└── config.json                  # Configuration (optional)
 ```
 
 ## Key Features
 
-### 1. On-Chain Data Parsing
+### 1. Pipeline Architecture
+
+Modular data processing with clear separation of concerns:
+- **FetchPoolData** → **CalculateIdealHedges** → **FetchMarketData**
+- **CalculateOffsets** → **ApplyPredefinedOffset** → **DecideActions** → **ExecuteActions**
+
+Each step is independently testable with built-in retry logic and timeout protection.
+
+### 2. On-Chain Data Parsing
 
 Both JLP and ALP hedge calculators read directly from Solana blockchain:
 - Binary parsing at specific account offsets
@@ -56,7 +75,7 @@ Both JLP and ALP hedge calculators read directly from Solana blockchain:
 - JITOSOL → SOL conversion (ALP)
 - WBTC → BTC unification
 
-### 2. Atomic Cost Tracking
+### 3. Atomic Cost Tracking
 
 The `offset_tracker.py` module implements a unified formula that handles all scenarios:
 
@@ -71,16 +90,30 @@ This single formula correctly handles:
 - ✅ Complete closure (reset to zero)
 - ✅ Direction reversal (long ↔ short)
 
-### 3. Dynamic Threshold System
+### 4. External Hedge Adjustment
 
-Zone-based triggering:
-- Minimum threshold: 1%
-- Maximum threshold: 2%
-- Step size: 0.2%
-- Automatic limit order placement
-- 20-minute timeout with forced market close
+Support for external hedges or intentional exposure via **predefined offsets**:
+```bash
+# Already hedged 1 SOL on Binance, reduce system hedge by 1
+PREDEFINED_OFFSET='{"SOL": -1.0, "BTC": 0.05}'
+```
 
-### 4. Unified Symbol Tracking
+### 5. Advanced Safety & Monitoring
+
+- **Circuit Breaker**: Prevents cascading failures with automatic cooldown
+- **Metrics Collection**: Track success rates, latency, error patterns
+- **Detailed Reports**: Position PnL, cost basis, decision process logging
+- **Sensitive Data Masking**: Automatic private key obfuscation in logs
+
+### 6. Dynamic Threshold System
+
+Zone-based triggering with USD absolute values:
+- Configurable min/max/step thresholds
+- Automatic limit order placement at cost basis
+- Timeout-based forced market closure
+- Per-symbol monitoring state
+
+### 7. Unified Symbol Tracking
 
 Positions tracked by symbol (SOL, ETH, BTC, BONK), not by pool. JLP and ALP positions are automatically merged.
 
@@ -110,26 +143,46 @@ docker-compose logs -f
 **Optional**: You can also create `config.json` from the example template, but environment variables take priority.
 
 ```env
-# Required
+# ===== Required =====
 EXCHANGE_NAME=lighter
 EXCHANGE_PRIVATE_KEY=your_lighter_private_key
 JLP_AMOUNT=100
 ALP_AMOUNT=0
 
-# Thresholds (USD absolute values)
+# ===== Thresholds (USD absolute values) =====
 THRESHOLD_MIN_USD=5.0
 THRESHOLD_MAX_USD=20.0
 THRESHOLD_STEP_USD=2.5
 
-# Optional (with defaults)
-ORDER_PRICE_OFFSET=0.2
-CLOSE_RATIO=40.0
-TIMEOUT_MINUTES=20
-CHECK_INTERVAL_SECONDS=60
+# ===== Order Execution =====
+ORDER_PRICE_OFFSET=0.2        # Limit order offset (%)
+CLOSE_RATIO=40.0              # Partial close percentage
+TIMEOUT_MINUTES=20            # Order timeout before forced market close
+CHECK_INTERVAL_SECONDS=60     # Main loop interval
+
+# ===== External Hedge Adjustment (Optional) =====
+# Adjust for hedges on other platforms
+PREDEFINED_OFFSET='{"SOL": -1.0, "BTC": 0.05}'
+
+# ===== Initial Position Offset (Optional) =====
+# If you have existing positions from before the system started
+INITIAL_OFFSET_SOL=0.0
+INITIAL_OFFSET_BTC=0.0
+INITIAL_OFFSET_ETH=0.0
+
+# ===== Notifications =====
+PUSHOVER_USER_KEY=your_user_key
+PUSHOVER_API_TOKEN=your_api_token
+PUSHOVER_ENABLED=true
+
+# ===== Monitoring =====
+ENABLE_DETAILED_REPORTS=true  # Show PnL, cost basis in logs
+LOG_LEVEL=INFO                # DEBUG, INFO, WARNING, ERROR
 ```
 
 > 💡 **Note**: `config.json` is optional. Environment variables take priority.
-> 💡 **Thresholds**: Now use USD absolute values instead of percentages for simpler, more predictable behavior.
+> 💡 **Thresholds**: Use USD absolute values instead of percentages for simpler, more predictable behavior.
+> 💡 **Predefined Offset**: For external hedges. Negative = reduce short, Positive = reduce long.
 
 ### Running Tests
 
@@ -240,14 +293,28 @@ PUSHOVER_ENABLED=true
 
 ## Roadmap
 
-- [x] ✅ Lighter exchange integration (completed)
+**Completed:**
+- [x] ✅ Lighter exchange integration
 - [x] ✅ Docker deployment support
 - [x] ✅ Environment-based configuration (12-factor app)
-- [ ] Add support for additional exchanges (Binance, OKX)
-- [ ] Structured logging system
-- [ ] Additional risk controls
+- [x] ✅ Pipeline architecture (modular data processing)
+- [x] ✅ Circuit breaker & error handling
+- [x] ✅ Metrics collection & monitoring
+- [x] ✅ Detailed position reports with PnL
+- [x] ✅ External hedge adjustment support
+- [x] ✅ Sensitive data masking in logs
+- [x] ✅ Type-safe configuration validation
+
+**In Progress:**
+- [ ] 🚧 Additional exchanges (Binance, OKX)
+- [ ] 🚧 Web dashboard for monitoring
+
+**Planned:**
 - [ ] Backtesting framework
-- [ ] Web dashboard
+- [ ] Multi-account support
+- [ ] Advanced risk controls (position limits, max drawdown)
+- [ ] Telegram notifications
+- [ ] Performance analytics dashboard
 
 ## License
 
