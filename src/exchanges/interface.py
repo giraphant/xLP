@@ -228,7 +228,7 @@ class LighterExchange(ExchangeInterface):
     def __init__(self, config: dict):
         super().__init__(config)
 
-        from lighter_integration import LighterClient
+        from exchanges.lighter import LighterClient
 
         # Initialize Lighter client
         self.lighter_client = LighterClient(
