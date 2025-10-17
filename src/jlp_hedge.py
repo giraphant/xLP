@@ -82,7 +82,7 @@ async def get_custody_data(client: AsyncClient, custody_addr: str, decimals: int
 
 
 async def calculate_hedge(jlp_amount: float) -> dict:
-    """计算对冲量"""
+    """计算对冲量（不包括稳定币）"""
     client = AsyncClient(RPC_URL)
 
     try:
