@@ -52,3 +52,4 @@ Thumbs.db
 *.tmp
 *.bak
 .cache/
+solana-lp-hedge/
