@@ -353,14 +353,25 @@ class LighterClient:
                 logger.error(f"Order creation failed: {error}")
                 raise Exception(f"Order creation failed: {error}")
 
-            logger.info(f"Order placed: {side} {size:.4f} {symbol} @ ${price:.2f}")
+            # Extract order_id from order_result for cancellation
+            # order_result should contain the actual order_id (integer)
+            order_id = None
+            if order_result and hasattr(order_result, 'order_id'):
+                order_id = str(order_result.order_id)
+            elif order_result and isinstance(order_result, dict) and 'order_id' in order_result:
+                order_id = str(order_result['order_id'])
 
-            # Return tx_hash as order identifier
-            # The tx_hash object has a tx_hash attribute with the actual hash string
-            if hasattr(tx_hash, 'tx_hash'):
-                return str(tx_hash.tx_hash)
-            else:
-                return str(tx_hash)
+            # If no order_id found, use client_order_index as fallback
+            if not order_id:
+                order_id = str(client_order_index)
+                logger.warning(f"Could not extract order_id from result, using client_order_index: {order_id}")
+
+            logger.info(f"Order placed: {side} {size:.4f} {symbol} @ ${price:.2f} (order_id={order_id})")
+
+            # Debug: log what we got
+            logger.debug(f"order_result type: {type(order_result)}, content: {order_result}")
+
+            return order_id
 
         except Exception as e:
             logger.error(f"Failed to place limit order: {e}")
@@ -431,13 +442,21 @@ class LighterClient:
                 logger.error(f"Market order failed: {error}")
                 raise Exception(f"Market order failed: {error}")
 
-            logger.info(f"Market order: {side} {size:.4f} {symbol} @ ~${current_price:.2f}")
+            # Extract order_id from order_result (same as limit order)
+            order_id = None
+            if order_result and hasattr(order_result, 'order_id'):
+                order_id = str(order_result.order_id)
+            elif order_result and isinstance(order_result, dict) and 'order_id' in order_result:
+                order_id = str(order_result['order_id'])
 
-            # Return tx_hash as order identifier
-            if hasattr(tx_hash, 'tx_hash'):
-                return str(tx_hash.tx_hash)
-            else:
-                return str(tx_hash)
+            # If no order_id found, use client_order_index as fallback
+            if not order_id:
+                order_id = str(client_order_index)
+                logger.warning(f"Could not extract order_id from result, using client_order_index: {order_id}")
+
+            logger.info(f"Market order: {side} {size:.4f} {symbol} @ ~${current_price:.2f} (order_id={order_id})")
+
+            return order_id
 
         except Exception as e:
             logger.error(f"Failed to place market order: {e}")
@@ -450,7 +469,7 @@ class LighterClient:
 
         Args:
             symbol: Market symbol (e.g., "SOL_USDC")
-            order_id: Order ID to cancel
+            order_id: Order ID to cancel (should be integer string)
 
         Returns:
             True if successful
@@ -461,9 +480,18 @@ class LighterClient:
         try:
             market_id = await self.get_market_id(symbol)
 
+            # Try to convert order_id to integer
+            try:
+                order_id_int = int(order_id)
+            except ValueError:
+                # If order_id is a tx_hash (hex string), we can't cancel it
+                logger.error(f"Invalid order_id format: {order_id} (expected integer, got tx_hash?)")
+                logger.error(f"Cannot cancel order - please check order_id source")
+                return False
+
             cancel_result, tx_hash, error = await self.client.cancel_order(
                 market_index=market_id,
-                order_id=int(order_id)
+                order_id=order_id_int
             )
 
             if error:
