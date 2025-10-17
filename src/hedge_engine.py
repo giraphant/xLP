@@ -8,6 +8,7 @@ import json
 import os
 import asyncio
 import logging
+import time
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Tuple
 from pathlib import Path
@@ -31,6 +32,21 @@ from core.exceptions import (
     should_retry,
     get_retry_delay
 )
+from core.config_validator import HedgeConfig, ValidationError
+from core.metrics import MetricsCollector
+from core.pipeline import (
+    HedgePipeline,
+    PipelineContext,
+    FetchPoolDataStep,
+    CalculateIdealHedgesStep,
+    FetchMarketDataStep,
+    CalculateOffsetsStep,
+    DecideActionsStep,
+    ExecuteActionsStep,
+    logging_middleware,
+    timing_middleware,
+    error_collection_middleware
+)
 from pools import jlp, alp
 
 logger = logging.getLogger(__name__)
@@ -41,9 +57,14 @@ class HedgeEngine:
         self.config_path = Path(config_path)
         self.state_path = Path(state_path)
 
-        # 加载并验证配置
-        self.config = self._load_config()
-        self._validate_config()
+        # 使用新的配置验证器加载配置
+        try:
+            self.validated_config = HedgeConfig.from_env_and_file(self.config_path)
+            self.config = self.validated_config.to_dict()  # 兼容旧代码
+            logger.info(self.validated_config.get_summary())
+        except ValidationError as e:
+            logger.critical(f"Configuration validation failed: {e}")
+            raise InvalidConfigError("config", str(e), "Valid configuration required")
 
         # 初始化状态管理器
         self.state_manager = StateManager(
@@ -54,9 +75,15 @@ class HedgeEngine:
         # 初始化熔断器管理器
         self.circuit_manager = CircuitBreakerManager()
 
+        # 初始化指标收集器
+        self.metrics = MetricsCollector()
+
         # 初始化交易所和通知器
         self.exchange = create_exchange(self.config["exchange"])
         self.notifier = Notifier(self.config["pushover"])
+
+        # 初始化数据管道（可选，用于新的处理流程）
+        self.pipeline = self._create_pipeline()
 
     def _load_config(self) -> dict:
         """
@@ -112,6 +139,18 @@ class HedgeEngine:
         config["rpc_url"] = os.getenv("RPC_URL", config.get("rpc_url", "https://api.mainnet-beta.solana.com"))
 
         return config
+
+    def _create_pipeline(self) -> HedgePipeline:
+        """创建数据处理管道"""
+        pipeline = HedgePipeline()
+
+        # 添加中间件
+        pipeline.add_middleware(logging_middleware)
+        pipeline.add_middleware(timing_middleware)
+        pipeline.add_middleware(error_collection_middleware)
+
+        # 注意：这里只是创建管道结构，实际使用时需要根据需求配置步骤
+        return pipeline
 
     def _validate_config(self):
         """验证配置完整性和合理性"""
@@ -359,9 +398,20 @@ class HedgeEngine:
                     # 增加订单计数
                     await self.state_manager.increment_counter(symbol, "stats.total_orders")
 
+                    # 记录指标
+                    await self.metrics.record_order(
+                        symbol, side, order_size, order_price, "limit", True
+                    )
+
                 except OrderPlacementError as e:
                     logger.error(f"Failed to place order: {e}")
                     await self.notifier.alert_order_failed(symbol, side, order_size, str(e))
+
+                    # 记录失败指标
+                    await self.metrics.record_order(
+                        symbol, side, order_size, order_price, "limit", False
+                    )
+                    self.metrics.record_error("order_placement", str(e))
 
         # 检查超时
         if is_monitoring and state.get("monitoring", {}).get("started_at"):
@@ -401,6 +451,12 @@ class HedgeEngine:
                     # 更新统计
                     await self.state_manager.increment_counter(symbol, "stats.forced_closes")
 
+                    # 记录强制平仓指标
+                    await self.metrics.record_forced_close(symbol, order_size, current_price)
+                    await self.metrics.record_order(
+                        symbol, side, order_size, current_price, "market", True
+                    )
+
                 except OrderPlacementError as e:
                     logger.error(f"Failed to place market order: {e}")
                     # 市价单失败是严重问题，需要通知
@@ -416,7 +472,8 @@ class HedgeEngine:
         await self.state_manager.save_state()
 
     async def run_once(self):
-        """执行一次检查循环（带错误处理）"""
+        """执行一次检查循环（带错误处理和指标记录）"""
+        start_time = time.time()
         logger.info(f"{'='*60}")
         logger.info(f"检查时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         logger.info(f"{'='*60}")
@@ -482,8 +539,21 @@ class HedgeEngine:
             # 清理空闲的熔断器
             self.circuit_manager.cleanup_idle()
 
+            # 记录处理时间指标
+            processing_time = time.time() - start_time
+            await self.metrics.record_processing("run_once", processing_time)
+
+            # 定期导出指标摘要（每10次运行）
+            total_runs = (await self.state_manager.get_metadata()).get("total_runs", 0)
+            if total_runs % 10 == 0:
+                summary = await self.metrics.export_summary()
+                logger.info(f"Metrics Summary: {json.dumps(summary, indent=2)}")
+
         except Exception as e:
             logger.error(f"Error in run_once: {e}")
+            # 记录错误指标
+            self.metrics.record_error(type(e).__name__, str(e))
+
             # 记录最后的错误
             await self.state_manager.update_metadata({
                 "last_error": str(e),
