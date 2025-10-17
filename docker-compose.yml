@@ -6,6 +6,10 @@ services:
     container_name: xlp-hedge-engine
     restart: unless-stopped
 
+    # 环境变量配置
+    env_file:
+      - .env
+
     # 持久化存储
     volumes:
       # 状态文件持久化（必须）
