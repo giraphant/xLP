@@ -23,16 +23,12 @@ COPY state_template.json .
 COPY config.json .
 
 # 创建必要的目录（用于volume挂载）
-RUN mkdir -p /app/data /app/data/backups /app/logs
+RUN mkdir -p /app/logs
 
 # 设置环境变量默认值
 ENV PYTHONUNBUFFERED=1 \
     LOG_LEVEL=INFO \
     CHECK_INTERVAL_SECONDS=60
-
-# 健康检查（检查状态文件是否存在且可解析）
-HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
-    CMD python -c "import json, os; exit(0 if os.path.exists('/app/data/state.json') and json.load(open('/app/data/state.json')) else 1)" || exit 1
 
 # 运行主程序
 CMD ["python", "-u", "src/main.py"]
