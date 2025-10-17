@@ -76,25 +76,47 @@ class LighterClient:
             # Get all available markets
             markets = await self.client.order_api.order_books()
 
-            for market in markets:
-                # market.market_id is the integer ID
-                # market.symbol or market.name should be the string identifier
-                symbol = getattr(market, 'symbol', getattr(market, 'name', None))
+            logger.debug(f"Received {len(markets) if markets else 0} markets from API")
 
-                if symbol:
-                    self.symbol_to_market_id[symbol] = market.market_id
-                    self.market_info[market.market_id] = {
-                        "symbol": symbol,
-                        "size_decimals": market.size_decimals,
-                        "price_decimals": market.price_decimals,
-                        "base_multiplier": 10 ** market.size_decimals,
-                        "price_multiplier": 10 ** market.price_decimals,
-                    }
+            if markets:
+                # Log first market to see structure
+                if len(markets) > 0:
+                    first_market = markets[0]
+                    logger.debug(f"First market object: {first_market}")
+                    logger.debug(f"First market attributes: {dir(first_market)}")
+
+                for market in markets:
+                    # Try different possible field names
+                    symbol = None
+                    for attr in ['symbol', 'name', 'market_symbol', 'pair', 'market_name']:
+                        if hasattr(market, attr):
+                            symbol = getattr(market, attr)
+                            if symbol:
+                                break
+
+                    # Try to get market_id
+                    market_id = getattr(market, 'market_id', getattr(market, 'id', None))
+
+                    logger.debug(f"Market: symbol={symbol}, id={market_id}")
+
+                    if symbol and market_id is not None:
+                        self.symbol_to_market_id[symbol] = market_id
+                        self.market_info[market_id] = {
+                            "symbol": symbol,
+                            "size_decimals": getattr(market, 'size_decimals', 9),
+                            "price_decimals": getattr(market, 'price_decimals', 6),
+                            "base_multiplier": 10 ** getattr(market, 'size_decimals', 9),
+                            "price_multiplier": 10 ** getattr(market, 'price_decimals', 6),
+                        }
 
             logger.info(f"Loaded {len(self.symbol_to_market_id)} markets from Lighter")
+            if self.symbol_to_market_id:
+                logger.info(f"Available markets: {list(self.symbol_to_market_id.keys())}")
 
         except Exception as e:
             logger.error(f"Failed to load markets: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             raise
 
     async def get_market_id(self, symbol: str) -> int:
