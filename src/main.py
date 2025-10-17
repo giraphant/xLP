@@ -23,7 +23,7 @@ from core.exceptions import (
     should_retry,
     get_retry_delay
 )
-from core.circuit_breaker import CircuitOpenError, circuit_breaker_manager
+from core.circuit_breaker import CircuitOpenError
 
 # 配置日志系统
 log_level = os.getenv("LOG_LEVEL", "INFO").upper()
