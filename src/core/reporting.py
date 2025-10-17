@@ -94,15 +94,21 @@ async def generate_position_report(context: PipelineContext, state_manager=None)
         if hasattr(context, 'actions') and context.actions:
             action = next((a for a in context.actions if a.symbol == symbol), None)
             if action:
-                action_map = {
-                    "place_limit_order": f"📝 下限价单: {action.side.upper()} {action.size:.6f} @ ${action.price:.2f}",
-                    "place_market_order": f"⚡ 下市价单: {action.side.upper()} {action.size:.6f}",
-                    "cancel_order": f"🚫 撤单: {action.order_id}",
-                    "no_action": "⏸️  无操作",
-                    "alert": f"⚠️  警报"
-                }
+                # 根据action类型安全构建描述
+                action_type = action.type.value
+                if action_type == "place_limit_order":
+                    action_desc = f"📝 下限价单: {action.side.upper()} {action.size:.6f} @ ${action.price:.2f}"
+                elif action_type == "place_market_order":
+                    action_desc = f"⚡ 下市价单: {action.side.upper()} {action.size:.6f}"
+                elif action_type == "cancel_order":
+                    action_desc = f"🚫 撤单: {action.order_id}"
+                elif action_type == "no_action":
+                    action_desc = "⏸️  无操作"
+                elif action_type == "alert":
+                    action_desc = "⚠️  警报"
+                else:
+                    action_desc = "未知操作"
 
-                action_desc = action_map.get(action.type.value, "未知操作")
                 logger.info(f"  决策: {action_desc}")
 
                 if action.reason:
