@@ -18,25 +18,32 @@ This system automatically calculates ideal hedge positions from on-chain data an
 ```
 xLP/
 ├── src/                        # Core source code
-│   ├── jlp_hedge.py           # JLP pool hedge calculator
-│   ├── alp_hedge.py           # ALP pool hedge calculator
-│   ├── offset_tracker.py      # ⭐ Atomic cost tracking module
+│   ├── main.py                # Main loop entry
 │   ├── hedge_engine.py        # Core hedge engine
-│   ├── lighter_integration.py # Lighter exchange integration
-│   ├── exchange_interface.py  # Exchange abstraction layer
-│   ├── notifier.py            # Pushover notifications
-│   └── main.py                # Main loop
-├── tests/                      # Test suite
+│   ├── core/                  # Core utility modules
+│   │   └── offset_tracker.py # ⭐ Atomic cost tracking
+│   ├── pools/                 # LP pool calculators
+│   │   ├── jlp.py            # JLP pool hedge calculator
+│   │   └── alp.py            # ALP pool hedge calculator
+│   ├── exchanges/             # Exchange integrations
+│   │   ├── interface.py      # Exchange abstraction layer
+│   │   └── lighter.py        # Lighter exchange integration
+│   └── notifications/         # Notification modules
+│       └── pushover.py       # Pushover notifications
+├── tests/                     # Test suite
 │   ├── test_cost_tracking.py
 │   ├── test_cost_detailed.py
 │   └── test_10_steps.py
-├── docs/                       # Documentation
-│   └── ARCHITECTURE.md
-├── Dockerfile                  # Docker image
-├── docker-compose.yml          # One-command deployment
-├── .env.example               # Environment variables template
-├── config.json                # Configuration (optional)
-└── state_template.json        # State file template
+├── docs/                      # Documentation
+│   ├── ARCHITECTURE.md
+│   ├── QUICKSTART.md
+│   ├── DOCKER_DEPLOYMENT.md
+│   └── PRODUCTION_CHECKLIST.md
+├── Dockerfile                 # Docker image
+├── docker-compose.yml         # One-command deployment
+├── .env.example              # Environment variables template
+├── config.json               # Configuration (optional)
+└── state_template.json       # State file template
 ```
 
 ## Key Features
@@ -79,7 +86,7 @@ Positions tracked by symbol (SOL, ETH, BTC, BONK), not by pool. JLP and ALP posi
 
 ## Quick Start
 
-**🐳 Recommended: Docker Deployment** (see [QUICKSTART.md](QUICKSTART.md))
+**🐳 Recommended: Docker Deployment** (see [docs/QUICKSTART.md](docs/QUICKSTART.md))
 
 ```bash
 # 1. Clone and configure
@@ -104,13 +111,15 @@ docker-compose logs -f
 # Required
 EXCHANGE_NAME=lighter
 EXCHANGE_PRIVATE_KEY=your_lighter_private_key
-JLP_AMOUNT=50000
-ALP_AMOUNT=10000
+JLP_AMOUNT=100
+ALP_AMOUNT=0
+
+# Thresholds (USD absolute values)
+THRESHOLD_MIN_USD=5.0
+THRESHOLD_MAX_USD=20.0
+THRESHOLD_STEP_USD=2.5
 
 # Optional (with defaults)
-THRESHOLD_MIN=1.0
-THRESHOLD_MAX=2.0
-THRESHOLD_STEP=0.2
 ORDER_PRICE_OFFSET=0.2
 CLOSE_RATIO=40.0
 TIMEOUT_MINUTES=20
@@ -118,6 +127,7 @@ CHECK_INTERVAL_SECONDS=60
 ```
 
 > 💡 **Note**: `config.json` is now optional. Environment variables take priority.
+> 💡 **Thresholds**: Now use USD absolute values instead of percentages for simpler, more predictable behavior.
 
 ### Running Tests
 
@@ -128,14 +138,14 @@ python tests/test_cost_detailed.py
 python tests/test_10_steps.py
 
 # Quick test of atomic module
-python src/offset_tracker.py
+python src/core/offset_tracker.py
 ```
 
 ### Running the Engine
 
 ```bash
 # Run once (for testing)
-python src/HedgeEngine.py
+python src/hedge_engine.py
 
 # Run main loop (production)
 python src/main.py
