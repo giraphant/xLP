@@ -11,7 +11,7 @@ import logging
 from decimal import Decimal
 from typing import Dict, Optional
 
-from lighter import SignerClient
+from lighter import SignerClient, ApiClient, Configuration, AccountApi
 
 logger = logging.getLogger(__name__)
 
@@ -40,19 +40,27 @@ class LighterClient:
         self.api_key_index = api_key_index
         self.base_url = base_url
         self.client: Optional[SignerClient] = None
+        self.api_client: Optional[ApiClient] = None
+        self.account_api: Optional[AccountApi] = None
         self.market_info = {}  # Cache market information
         self.symbol_to_market_id = {}  # Map symbol (SOL_USDC) to market_id (int)
 
     async def initialize(self):
-        """Initialize the Lighter SignerClient"""
+        """Initialize the Lighter SignerClient and AccountApi"""
         if self.client is None:
             try:
+                # Initialize SignerClient for trading operations
                 self.client = SignerClient(
                     url=self.base_url,
                     private_key=self.private_key,
                     account_index=self.account_index,
                     api_key_index=self.api_key_index,
                 )
+
+                # Initialize ApiClient and AccountApi for account data queries
+                config = Configuration(host=self.base_url)
+                self.api_client = ApiClient(configuration=config)
+                self.account_api = AccountApi(self.api_client)
 
                 # Skip check_client() due to SDK bug with sub-accounts
                 # The SDK has issues validating sub-accounts and non-zero api_key_index
@@ -167,20 +175,24 @@ class LighterClient:
         Returns:
             Position size (negative for short, positive for long, in actual token amount)
         """
-        if self.client is None:
+        if self.account_api is None:
             await self.initialize()
 
         try:
             # Get numeric market ID
             market_id = await self.get_market_id(symbol)
 
-            # Get account positions using account_api
-            positions = await self.client.account_api.account_positions(
-                auth_token=await self.client.create_auth_token()
+            # Get account data using AccountApi
+            # Query by account index
+            account = await self.account_api.account(
+                by="index",
+                value=str(self.account_index)
             )
 
-            if positions and hasattr(positions, 'positions'):
-                for position in positions.positions:
+            # Account response includes positions array
+            # Each position has: market_id, position, avg_entry_price, unrealized_pnl, etc.
+            if account and hasattr(account, 'positions'):
+                for position in account.positions:
                     if position.market_id == market_id:
                         # Position is in Lighter's integer format, need to convert
                         market_info = await self.get_market_info(symbol)
@@ -199,6 +211,8 @@ class LighterClient:
 
         except Exception as e:
             logger.error(f"Failed to get position for {symbol}: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             raise
 
     async def get_price(self, symbol: str) -> float:
