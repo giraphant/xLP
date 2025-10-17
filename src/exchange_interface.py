@@ -247,14 +247,14 @@ class LighterExchange(ExchangeInterface):
 
     async def get_position(self, symbol: str) -> float:
         """获取当前持仓数量"""
-        market_id = self._get_market_id(symbol)
-        position = await self.lighter_client.get_position(market_id)
+        lighter_symbol = self._get_market_id(symbol)
+        position = await self.lighter_client.get_position(lighter_symbol)
         return position
 
     async def get_price(self, symbol: str) -> float:
         """获取当前市场价格"""
-        market_id = self._get_market_id(symbol)
-        price = await self.lighter_client.get_price(market_id)
+        lighter_symbol = self._get_market_id(symbol)
+        price = await self.lighter_client.get_price(lighter_symbol)
         return price
 
     async def place_limit_order(
@@ -265,9 +265,9 @@ class LighterExchange(ExchangeInterface):
         price: float
     ) -> str:
         """下限价单"""
-        market_id = self._get_market_id(symbol)
+        lighter_symbol = self._get_market_id(symbol)
         order_id = await self.lighter_client.place_limit_order(
-            market_id=market_id,
+            symbol=lighter_symbol,
             side=side,
             size=size,
             price=price,
@@ -275,7 +275,7 @@ class LighterExchange(ExchangeInterface):
         )
 
         # Store mapping for cancellation
-        self.order_map[order_id] = (symbol, market_id)
+        self.order_map[order_id] = (symbol, lighter_symbol)
         return order_id
 
     async def place_market_order(
@@ -285,15 +285,15 @@ class LighterExchange(ExchangeInterface):
         size: float
     ) -> str:
         """下市价单"""
-        market_id = self._get_market_id(symbol)
+        lighter_symbol = self._get_market_id(symbol)
         order_id = await self.lighter_client.place_market_order(
-            market_id=market_id,
+            symbol=lighter_symbol,
             side=side,
             size=size
         )
 
         # Store mapping for cancellation
-        self.order_map[order_id] = (symbol, market_id)
+        self.order_map[order_id] = (symbol, lighter_symbol)
         return order_id
 
     async def cancel_order(self, order_id: str) -> bool:
@@ -303,8 +303,8 @@ class LighterExchange(ExchangeInterface):
             # This is a fallback - ideally we should always have the mapping
             return False
 
-        symbol, market_id = self.order_map[order_id]
-        success = await self.lighter_client.cancel_order(market_id, order_id)
+        symbol, lighter_symbol = self.order_map[order_id]
+        success = await self.lighter_client.cancel_order(lighter_symbol, order_id)
 
         if success:
             del self.order_map[order_id]
@@ -316,8 +316,8 @@ class LighterExchange(ExchangeInterface):
         if order_id not in self.order_map:
             return {"status": "not_found", "filled_size": 0.0, "remaining_size": 0.0}
 
-        symbol, market_id = self.order_map[order_id]
-        status = await self.lighter_client.get_order_status(market_id, order_id)
+        symbol, lighter_symbol = self.order_map[order_id]
+        status = await self.lighter_client.get_order_status(lighter_symbol, order_id)
         return status
 
 
