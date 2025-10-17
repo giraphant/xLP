@@ -239,7 +239,7 @@ docker-compose restart
 docker-compose down
 
 # 更新代码
-git pull origin master
+git pull origin main
 docker-compose up -d --build
 
 # 备份状态
