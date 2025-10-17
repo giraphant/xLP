@@ -214,21 +214,47 @@ class MockExchange(ExchangeInterface):
 class LighterExchange(ExchangeInterface):
     """
     Lighter交易所实现
-    TODO: 实现实际的API调用
     """
+
+    # Symbol to Lighter market ID mapping
+    SYMBOL_MAP = {
+        "SOL": "SOL_USDC",
+        "ETH": "ETH_USDC",
+        "BTC": "BTC_USDC",
+        "BONK": "BONK_USDC",
+    }
 
     def __init__(self, config: dict):
         super().__init__(config)
-        # TODO: 初始化Lighter API客户端
-        raise NotImplementedError("Lighter exchange integration not implemented yet")
+
+        from lighter_integration import LighterClient
+
+        # Initialize Lighter client
+        self.lighter_client = LighterClient(
+            private_key=config.get("api_key", config.get("private_key")),
+            account_index=config.get("account_index", 0),
+            api_key_index=config.get("api_key_index", 0),
+            base_url=config.get("base_url", "https://mainnet.zklighter.elliot.ai")
+        )
+
+        # Track order IDs per symbol for cancellation
+        self.order_map = {}  # {order_id: (symbol, market_id)}
+
+    def _get_market_id(self, symbol: str) -> str:
+        """Convert symbol to Lighter market ID"""
+        return self.SYMBOL_MAP.get(symbol.upper(), f"{symbol.upper()}_USDC")
 
     async def get_position(self, symbol: str) -> float:
-        # TODO: 调用Lighter API获取持仓
-        raise NotImplementedError()
+        """获取当前持仓数量"""
+        market_id = self._get_market_id(symbol)
+        position = await self.lighter_client.get_position(market_id)
+        return position
 
     async def get_price(self, symbol: str) -> float:
-        # TODO: 调用Lighter API获取价格
-        raise NotImplementedError()
+        """获取当前市场价格"""
+        market_id = self._get_market_id(symbol)
+        price = await self.lighter_client.get_price(market_id)
+        return price
 
     async def place_limit_order(
         self,
@@ -237,8 +263,19 @@ class LighterExchange(ExchangeInterface):
         size: float,
         price: float
     ) -> str:
-        # TODO: 调用Lighter API下单
-        raise NotImplementedError()
+        """下限价单"""
+        market_id = self._get_market_id(symbol)
+        order_id = await self.lighter_client.place_limit_order(
+            market_id=market_id,
+            side=side,
+            size=size,
+            price=price,
+            reduce_only=False
+        )
+
+        # Store mapping for cancellation
+        self.order_map[order_id] = (symbol, market_id)
+        return order_id
 
     async def place_market_order(
         self,
@@ -246,16 +283,41 @@ class LighterExchange(ExchangeInterface):
         side: str,
         size: float
     ) -> str:
-        # TODO: 调用Lighter API下单
-        raise NotImplementedError()
+        """下市价单"""
+        market_id = self._get_market_id(symbol)
+        order_id = await self.lighter_client.place_market_order(
+            market_id=market_id,
+            side=side,
+            size=size
+        )
+
+        # Store mapping for cancellation
+        self.order_map[order_id] = (symbol, market_id)
+        return order_id
 
     async def cancel_order(self, order_id: str) -> bool:
-        # TODO: 调用Lighter API撤单
-        raise NotImplementedError()
+        """撤销订单"""
+        if order_id not in self.order_map:
+            # Try to extract market ID from order ID or use default
+            # This is a fallback - ideally we should always have the mapping
+            return False
+
+        symbol, market_id = self.order_map[order_id]
+        success = await self.lighter_client.cancel_order(market_id, order_id)
+
+        if success:
+            del self.order_map[order_id]
+
+        return success
 
     async def get_order_status(self, order_id: str) -> Dict:
-        # TODO: 调用Lighter API查询订单
-        raise NotImplementedError()
+        """查询订单状态"""
+        if order_id not in self.order_map:
+            return {"status": "not_found", "filled_size": 0.0, "remaining_size": 0.0}
+
+        symbol, market_id = self.order_map[order_id]
+        status = await self.lighter_client.get_order_status(market_id, order_id)
+        return status
 
 
 def create_exchange(config: dict) -> ExchangeInterface:
