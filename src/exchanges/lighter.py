@@ -335,21 +335,6 @@ class LighterClient:
         if base_amount < 1:
             raise ValueError(f"Order size too small: {size:.8f} {symbol} (BaseAmount={base_amount}, minimum is 1)")
 
-        # Check minimum order value (Lighter typically requires $50+ per order)
-        MIN_ORDER_VALUE_USD = {
-            "BTC": 100.0,   # $100 minimum for BTC
-            "ETH": 50.0,    # $50 minimum for ETH
-            "SOL": 50.0,    # $50 minimum for SOL
-            "1000BONK": 50.0  # $50 minimum
-        }
-
-        min_value = MIN_ORDER_VALUE_USD.get(symbol, 50.0)
-        if order_value_usd < min_value:
-            raise ValueError(
-                f"Order value too small: ${order_value_usd:.2f} < ${min_value:.2f} minimum for {symbol}. "
-                f"Order will be rejected by exchange. Consider increasing close_ratio or waiting for larger offset."
-            )
-
         # Generate client order ID
         client_order_index = int(time.time() * 1000) % 1000000
 
@@ -366,31 +351,36 @@ class LighterClient:
                 'trigger_price': 0,
             }
 
-            order_result, tx_hash, error = await self.client.create_order(**order_params)
+            order_result, tx_response, error = await self.client.create_order(**order_params)
 
             if error:
                 logger.error(f"Order creation failed: {error}")
                 raise Exception(f"Order creation failed: {error}")
 
-            # Extract order_id from order_result for cancellation
-            # order_result should contain the actual order_id (integer)
-            order_id = None
-            if order_result and hasattr(order_result, 'order_id'):
-                order_id = str(order_result.order_id)
-            elif order_result and isinstance(order_result, dict) and 'order_id' in order_result:
-                order_id = str(order_result['order_id'])
+            # Log the actual API response
+            logger.info(f"📡 API Response: code={tx_response.code}, message={tx_response.message}, tx_hash={tx_response.tx_hash}")
 
-            # If no order_id found, use client_order_index as fallback
-            if not order_id:
-                order_id = str(client_order_index)
-                logger.warning(f"Could not extract order_id from result, using client_order_index: {order_id}")
+            # Check response code - need to understand what indicates success
+            if tx_response.code != 200:
+                logger.error(f"Order rejected by exchange: code={tx_response.code}, message={tx_response.message}")
+                raise Exception(f"Order rejected: {tx_response.message or 'Unknown error'}")
 
-            logger.info(f"Order placed: {side} {size:.4f} {symbol} @ ${price:.2f} (order_id={order_id})")
+            # Check for additional error information in response
+            if tx_response.message and "error" in tx_response.message.lower():
+                logger.warning(f"Potential error in response message: {tx_response.message}")
 
-            # Debug: log what we got
-            logger.debug(f"order_result type: {type(order_result)}, content: {order_result}")
+            # Log additional_properties if present (might contain important info)
+            if hasattr(tx_response, 'additional_properties') and tx_response.additional_properties:
+                logger.info(f"Additional response data: {tx_response.additional_properties}")
 
-            return order_id
+            # For cancellation, use the client_order_index we generated
+            # This is the correct way according to official examples
+            order_index = str(client_order_index)
+
+            logger.info(f"✅ Order placed: {side} {size:.4f} {symbol} @ ${price:.2f} (order_index={order_index}, tx={tx_response.tx_hash[:16]}...)")
+            logger.debug(f"Order request: {order_result}")
+
+            return order_index
 
         except Exception as e:
             logger.error(f"Failed to place limit order: {e}")
@@ -455,40 +445,39 @@ class LighterClient:
                 'trigger_price': 0,
             }
 
-            order_result, tx_hash, error = await self.client.create_order(**order_params)
+            order_result, tx_response, error = await self.client.create_order(**order_params)
 
             if error:
                 logger.error(f"Market order failed: {error}")
                 raise Exception(f"Market order failed: {error}")
 
-            # Extract order_id from order_result (same as limit order)
-            order_id = None
-            if order_result and hasattr(order_result, 'order_id'):
-                order_id = str(order_result.order_id)
-            elif order_result and isinstance(order_result, dict) and 'order_id' in order_result:
-                order_id = str(order_result['order_id'])
+            # Log the actual API response
+            logger.info(f"📡 API Response: code={tx_response.code}, message={tx_response.message}, tx_hash={tx_response.tx_hash}")
 
-            # If no order_id found, use client_order_index as fallback
-            if not order_id:
-                order_id = str(client_order_index)
-                logger.warning(f"Could not extract order_id from result, using client_order_index: {order_id}")
+            # Check response code
+            if tx_response.code != 200:
+                logger.error(f"Market order rejected: code={tx_response.code}, message={tx_response.message}")
+                raise Exception(f"Order rejected: {tx_response.message or 'Unknown error'}")
 
-            logger.info(f"Market order: {side} {size:.4f} {symbol} @ ~${current_price:.2f} (order_id={order_id})")
+            # For cancellation, use the client_order_index we generated
+            order_index = str(client_order_index)
 
-            return order_id
+            logger.info(f"✅ Market order: {side} {size:.4f} {symbol} @ ~${current_price:.2f} (order_index={order_index}, tx={tx_response.tx_hash[:16]}...)")
+
+            return order_index
 
         except Exception as e:
             logger.error(f"Failed to place market order: {e}")
             logger.error(traceback.format_exc())
             raise
 
-    async def cancel_order(self, symbol: str, order_id: str) -> bool:
+    async def cancel_order(self, symbol: str, order_index: str) -> bool:
         """
         Cancel an order
 
         Args:
-            symbol: Market symbol (e.g., "SOL_USDC")
-            order_id: Order ID to cancel (should be integer string)
+            symbol: Market symbol (e.g., "SOL", "BTC")
+            order_index: The client_order_index used when creating the order
 
         Returns:
             True if successful
@@ -499,26 +488,34 @@ class LighterClient:
         try:
             market_id = await self.get_market_id(symbol)
 
-            # Try to convert order_id to integer
+            # Convert order_index to integer (it should be the client_order_index from creation)
             try:
-                order_id_int = int(order_id)
+                order_index_int = int(order_index)
             except ValueError:
-                # If order_id is a tx_hash (hex string), we can't cancel it
-                logger.error(f"Invalid order_id format: {order_id} (expected integer, got tx_hash?)")
-                logger.error(f"Cannot cancel order - please check order_id source")
+                logger.error(f"Invalid order_index format: {order_index} (expected integer)")
                 return False
 
-            cancel_result, tx_hash, error = await self.client.cancel_order(
+            # Use the correct parameter name: order_index (not order_id)
+            cancel_result, tx_response, error = await self.client.cancel_order(
                 market_index=market_id,
-                order_id=order_id_int
+                order_index=order_index_int
             )
 
             if error:
+                logger.error(f"Order cancellation failed: {error}")
                 raise Exception(f"Order cancellation failed: {error}")
 
-            logger.info(f"Order canceled: {order_id}, tx: {tx_hash}")
+            # Log response
+            logger.info(f"📡 Cancel Response: code={tx_response.code}, message={tx_response.message}")
+
+            if tx_response.code != 200:
+                logger.error(f"Cancellation rejected: code={tx_response.code}, message={tx_response.message}")
+                return False
+
+            logger.info(f"✅ Order canceled: order_index={order_index}, tx={tx_response.tx_hash[:16]}...")
             return True
 
         except Exception as e:
-            logger.error(f"Failed to cancel order {order_id}: {e}")
+            logger.error(f"Failed to cancel order {order_index}: {e}")
+            logger.error(traceback.format_exc())
             return False
