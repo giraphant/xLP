@@ -12,11 +12,10 @@ from typing import Dict, Optional, Tuple
 from pathlib import Path
 
 # 导入本地模块
-from exchange_interface import create_exchange
-from notifier import Notifier
-from offset_tracker import calculate_offset_and_cost
-import jlp_hedge
-import alp_hedge
+from exchanges.interface import create_exchange
+from notifications.pushover import Notifier
+from core.offset_tracker import calculate_offset_and_cost
+from pools import jlp, alp
 
 
 class HedgeEngine:
@@ -122,9 +121,9 @@ class HedgeEngine:
             {"SOL": -100.5, "ETH": -5.2, "BTC": -0.5, ...} 负数表示做空
         """
         if pool_type == "jlp":
-            positions = await jlp_hedge.calculate_hedge(amount)
+            positions = await jlp.calculate_hedge(amount)
         elif pool_type == "alp":
-            positions = await alp_hedge.calculate_hedge(amount)
+            positions = await alp.calculate_hedge(amount)
         else:
             raise ValueError(f"Unknown pool type: {pool_type}")
 
