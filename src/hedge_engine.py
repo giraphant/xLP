@@ -16,13 +16,13 @@ from exchanges.interface import create_exchange
 from notifications.pushover import Notifier
 from core.offset_tracker import calculate_offset_and_cost
 from core.state_manager import StateManager
-from core.circuit_breaker import CircuitBreakerManager
 from core.exceptions import HedgeEngineError, InvalidConfigError
-from core.config_validator import HedgeConfig, ValidationError
-from core.metrics import MetricsCollector
 from core.pipeline import PipelineContext, create_hedge_pipeline
 from core.decision_engine import DecisionEngine
 from core.action_executor import ActionExecutor
+from utils.circuit_breaker import CircuitBreakerManager
+from utils.config_validator import HedgeConfig, ValidationError
+from monitoring.metrics import MetricsCollector
 from pools import jlp, alp
 
 logger = logging.getLogger(__name__)
@@ -113,7 +113,7 @@ class HedgeEngine:
             # 生成详细报告（如果启用）
             import os
             if os.getenv("ENABLE_DETAILED_REPORTS", "true").lower() in ("true", "1", "yes"):
-                from core.reporting import generate_position_report
+                from monitoring.reports import generate_position_report
                 await generate_position_report(context, self.state_manager)
 
             # 处理管道结果
