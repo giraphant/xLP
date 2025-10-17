@@ -7,8 +7,18 @@
 import asyncio
 import signal
 import sys
+import logging
+import os
 from datetime import datetime
 from hedge_engine import HedgeEngine
+
+# 配置日志系统
+log_level = os.getenv("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=getattr(logging, log_level, logging.INFO),
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
 
 
 class HedgeBot:
