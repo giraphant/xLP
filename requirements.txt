@@ -3,6 +3,9 @@ httpx>=0.27.0           # HTTP client for API calls
 solana>=0.30.0          # Solana blockchain interaction
 solders>=0.18.0         # Solana SDK
 
+# Lighter Exchange Integration
+git+https://github.com/elliottech/lighter-python.git@d0009799970aad54ebb940aa3dc90cbc00028c54
+
 # Notifications
 # httpx already included above for Pushover
 

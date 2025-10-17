@@ -16,9 +16,10 @@
   },
   "exchange": {
     "name": "mock",
-    "api_key": "",
-    "api_secret": "",
-    "testnet": false
+    "private_key": "",
+    "account_index": 0,
+    "api_key_index": 0,
+    "base_url": "https://mainnet.zklighter.elliot.ai"
   },
   "pushover": {
     "user_key": "",
