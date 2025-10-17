@@ -1,0 +1,12 @@
+# Core dependencies
+httpx>=0.27.0           # HTTP client for API calls
+solana>=0.30.0          # Solana blockchain interaction
+solders>=0.18.0         # Solana SDK
+
+# Notifications
+# httpx already included above for Pushover
+
+# Optional: Development and testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+black>=23.0.0
