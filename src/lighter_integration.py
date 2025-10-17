@@ -65,12 +65,15 @@ class LighterClient:
                 raise
 
     async def _load_markets(self):
-        """Load all markets and build symbol-to-ID mapping"""
+        """Load only the 4 required markets (BTC, ETH, SOL, 1000BONK)"""
         if self.symbol_to_market_id:
             return  # Already loaded
 
         if self.client is None:
             await self.initialize()
+
+        # Only load markets we actually need for performance
+        REQUIRED_MARKETS = {"BTC", "ETH", "SOL", "1000BONK"}
 
         try:
             # Get all available markets (returns OrderBooks object)
@@ -80,13 +83,17 @@ class LighterClient:
             # OrderBooks has .order_books field which is List[OrderBook]
             markets = order_books_response.order_books
 
-            logger.info(f"Loaded {len(markets)} markets from Lighter API")
+            logger.info(f"Filtering {len(markets)} markets for required symbols: {REQUIRED_MARKETS}")
 
             for market in markets:
+                symbol = market.symbol
+
+                # Skip markets we don't need
+                if symbol not in REQUIRED_MARKETS:
+                    continue
+
                 # OrderBook fields: symbol, market_id, supported_size_decimals, supported_price_decimals
                 # See: https://github.com/elliottech/lighter-python/blob/main/lighter/models/order_book.py
-
-                symbol = market.symbol
                 market_id = market.market_id
                 size_decimals = market.supported_size_decimals
                 price_decimals = market.supported_price_decimals
@@ -106,7 +113,7 @@ class LighterClient:
                 else:
                     logger.debug(f"Skipping {symbol} (status={market.status})")
 
-            logger.info(f"Loaded {len(self.symbol_to_market_id)} active markets")
+            logger.info(f"Loaded {len(self.symbol_to_market_id)} required markets")
             logger.info(f"Available markets: {sorted(self.symbol_to_market_id.keys())}")
 
         except Exception as e:
@@ -155,10 +162,10 @@ class LighterClient:
         Get current position for a market
 
         Args:
-            symbol: Market symbol (e.g., "SOL_USDC")
+            symbol: Market symbol (e.g., "SOL", "1000BONK")
 
         Returns:
-            Position size (negative for short, positive for long)
+            Position size (negative for short, positive for long, in actual token amount)
         """
         if self.client is None:
             await self.initialize()
@@ -177,7 +184,16 @@ class LighterClient:
                     if position.market_id == market_id:
                         # Position is in Lighter's integer format, need to convert
                         market_info = await self.get_market_info(symbol)
-                        return float(position.position) / market_info["base_multiplier"]
+                        pos = float(position.position) / market_info["base_multiplier"]
+
+                        # Handle 1000X markets (1000BONK, 1000PEPE, etc.)
+                        # On Lighter: 1 unit = 1000 actual tokens
+                        # So if position is 1 unit on Lighter, actual position is 1000 tokens
+                        if symbol.startswith("1000"):
+                            pos = pos * 1000
+                            logger.debug(f"Converting position for {symbol}: Lighter position * 1000 = {pos}")
+
+                        return pos
 
             return 0.0
 
@@ -211,9 +227,9 @@ class LighterClient:
 
             if orderbook and hasattr(orderbook, 'bids') and hasattr(orderbook, 'asks'):
                 if orderbook.bids and orderbook.asks:
-                    # Prices are in integer format, convert to float
-                    best_bid = float(orderbook.bids[0]['price']) / market_info["price_multiplier"]
-                    best_ask = float(orderbook.asks[0]['price']) / market_info["price_multiplier"]
+                    # bids[0] and asks[0] are SimpleOrder objects with .price attribute
+                    best_bid = float(orderbook.bids[0].price) / market_info["price_multiplier"]
+                    best_ask = float(orderbook.asks[0].price) / market_info["price_multiplier"]
                     return (best_bid + best_ask) / 2
 
             # Fallback: try to get from recent trades
@@ -223,7 +239,10 @@ class LighterClient:
             )
 
             if trades and len(trades) > 0:
-                return float(trades[0]['price']) / market_info["price_multiplier"]
+                # trades[0] is likely also an object with .price attribute
+                trade_price = getattr(trades[0], 'price', None)
+                if trade_price:
+                    return float(trade_price) / market_info["price_multiplier"]
 
             logger.warning(f"No price data available for {symbol}")
             return 0.0
@@ -244,9 +263,9 @@ class LighterClient:
         Place a limit order
 
         Args:
-            symbol: Market symbol (e.g., "SOL_USDC")
+            symbol: Market symbol (e.g., "SOL", "1000BONK")
             side: "buy" or "sell"
-            size: Order size
+            size: Order size (in actual token amount, will be converted for 1000X markets)
             price: Limit price
             reduce_only: Whether this is a reduce-only order
 
@@ -259,6 +278,13 @@ class LighterClient:
         # Get market ID and info
         market_id = await self.get_market_id(symbol)
         market_info = await self.get_market_info(symbol)
+
+        # Handle 1000X markets (1000BONK, 1000PEPE, etc.)
+        # On Lighter: 1 unit of 1000BONK = 1000 actual BONK tokens
+        # So if we want to trade 1000 BONK, we order 1 unit on Lighter
+        if symbol.startswith("1000"):
+            size = size / 1000
+            logger.debug(f"Converting size for {symbol}: original size / 1000 = {size}")
 
         # Convert to Lighter's integer format
         is_ask = side.lower() == "sell"
