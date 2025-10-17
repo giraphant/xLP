@@ -216,12 +216,13 @@ class LighterExchange(ExchangeInterface):
     Lighter交易所实现
     """
 
-    # Symbol to Lighter market ID mapping
+    # Symbol to Lighter market symbol mapping
+    # Note: Lighter uses direct symbols (e.g., "BTC", "SOL"), not "BTC_USDC"
     SYMBOL_MAP = {
-        "SOL": "SOL_USDC",
-        "ETH": "ETH_USDC",
-        "BTC": "BTC_USDC",
-        "BONK": "BONK_USDC",
+        "SOL": "SOL",
+        "ETH": "ETH",
+        "BTC": "BTC",
+        "BONK": "1000BONK",  # Lighter uses 1000BONK, not BONK
     }
 
     def __init__(self, config: dict):
@@ -241,8 +242,8 @@ class LighterExchange(ExchangeInterface):
         self.order_map = {}  # {order_id: (symbol, market_id)}
 
     def _get_market_id(self, symbol: str) -> str:
-        """Convert symbol to Lighter market ID"""
-        return self.SYMBOL_MAP.get(symbol.upper(), f"{symbol.upper()}_USDC")
+        """Convert symbol to Lighter market symbol"""
+        return self.SYMBOL_MAP.get(symbol.upper(), symbol.upper())
 
     async def get_position(self, symbol: str) -> float:
         """获取当前持仓数量"""
