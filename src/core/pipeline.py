@@ -725,7 +725,7 @@ def create_hedge_pipeline(
 async def logging_middleware(context: PipelineContext, phase: str):
     """日志中间件（自动遮蔽敏感信息）"""
     if phase == "before":
-        from core.logging_utils import mask_sensitive_data
+        from utils.logging_utils import mask_sensitive_data
         masked_config = mask_sensitive_data(context.config)
         logger.debug(f"Pipeline starting with config: {masked_config}")
     elif phase == "after":
