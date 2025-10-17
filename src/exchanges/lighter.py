@@ -385,11 +385,11 @@ class LighterClient:
         # Get current market price
         current_price = await self.get_price(symbol)
 
-        # Use extreme price to ensure immediate execution (20% buffer to avoid accidental price flag)
+        # Use 1% slippage for market-like execution (minimal IL)
         if side.lower() == "buy":
-            price = current_price * 1.20  # 20% above market
+            price = current_price * 1.01  # 1% above market
         else:
-            price = current_price * 0.80  # 20% below market
+            price = current_price * 0.99  # 1% below market
 
         # Convert size for 1000X markets (e.g., 1000BONK)
         size = self._convert_1000x_size(symbol, size, to_lighter=True)
@@ -403,7 +403,7 @@ class LighterClient:
         client_order_index = int(time.time() * 1000) % 1000000
 
         try:
-            # Use IOC (Immediate Or Cancel) for market-like execution
+            # Use regular limit order with 1% slippage for market execution
             order_params = {
                 'market_index': market_id,
                 'client_order_index': client_order_index,
@@ -411,7 +411,7 @@ class LighterClient:
                 'price': price_int,
                 'is_ask': is_ask,
                 'order_type': self.client.ORDER_TYPE_LIMIT,
-                'time_in_force': self.client.ORDER_TIME_IN_FORCE_IMMEDIATE_OR_CANCEL,
+                'time_in_force': self.client.ORDER_TIME_IN_FORCE_GOOD_TILL_TIME,
                 'reduce_only': False,
                 'trigger_price': 0,
             }
