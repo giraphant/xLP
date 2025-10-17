@@ -182,6 +182,7 @@ class HedgeConfig:
 
     # 其他配置
     rpc_url: str = "https://api.mainnet-beta.solana.com"
+    predefined_offset: Dict[str, float] = field(default_factory=dict)  # 外部对冲调整
 
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]) -> "HedgeConfig":
@@ -213,6 +214,7 @@ class HedgeConfig:
         }
 
         initial_offset_dict = config_dict.get("initial_offset", {})
+        predefined_offset_dict = config_dict.get("predefined_offset", {})
 
         return cls(
             exchange=ExchangeConfig(**exchange_dict),
@@ -221,7 +223,8 @@ class HedgeConfig:
             pools=PoolConfig(**pools_dict),
             timing=TimingConfig(**timing_dict),
             initial_offset=InitialOffsetConfig(**initial_offset_dict),
-            rpc_url=config_dict.get("rpc_url", "https://api.mainnet-beta.solana.com")
+            rpc_url=config_dict.get("rpc_url", "https://api.mainnet-beta.solana.com"),
+            predefined_offset=predefined_offset_dict
         )
 
     @classmethod
@@ -329,6 +332,16 @@ class HedgeConfig:
         if "RPC_URL" in os.environ:
             config_dict["rpc_url"] = os.getenv("RPC_URL")
 
+        # 预设偏移配置（用于外部对冲调整）
+        if "PREDEFINED_OFFSET" in os.environ:
+            try:
+                predefined_offset_str = os.getenv("PREDEFINED_OFFSET")
+                config_dict["predefined_offset"] = json.loads(predefined_offset_str)
+                logger.info(f"Loaded predefined_offset from env: {config_dict['predefined_offset']}")
+            except json.JSONDecodeError as e:
+                logger.error(f"Invalid JSON in PREDEFINED_OFFSET: {e}")
+                raise ValidationError(f"PREDEFINED_OFFSET must be valid JSON: {e}")
+
         return config_dict
 
     def validate(self):
@@ -367,7 +380,7 @@ class HedgeConfig:
 
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典（用于兼容旧代码）"""
-        return {
+        result = {
             "jlp_amount": self.pools.jlp_amount,
             "alp_amount": self.pools.alp_amount,
             "threshold_min_usd": self.thresholds.min_usd,
@@ -380,8 +393,11 @@ class HedgeConfig:
             "exchange": asdict(self.exchange),
             "pushover": asdict(self.pushover),
             "initial_offset": asdict(self.initial_offset),
-            "rpc_url": self.rpc_url
+            "rpc_url": self.rpc_url,
+            "predefined_offset": self.predefined_offset
         }
+
+        return result
 
     def save(self, filepath: Path):
         """保存配置到文件"""
@@ -407,6 +423,12 @@ class HedgeConfig:
             f"  Close Ratio: {self.timing.close_ratio}%",
             f"  Pushover: {'Enabled' if self.pushover.enabled else 'Disabled'}"
         ]
+
+        # 显示预设偏移（如果配置了）
+        if self.predefined_offset:
+            offsets_str = ", ".join([f"{k}:{v:+.4f}" for k, v in self.predefined_offset.items()])
+            lines.append(f"  Predefined Offsets: {offsets_str}")
+
         return "\n".join(lines)
 
 
