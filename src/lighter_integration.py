@@ -73,10 +73,33 @@ class LighterClient:
             await self.initialize()
 
         try:
-            # Get all available markets
-            markets = await self.client.order_api.order_books()
+            # Get all available markets (returns OrderBooks object)
+            order_books_response = await self.client.order_api.order_books()
 
-            logger.debug(f"Received {len(markets) if markets else 0} markets from API")
+            logger.debug(f"Received OrderBooks response: {order_books_response}")
+            logger.debug(f"OrderBooks attributes: {dir(order_books_response)}")
+
+            # The OrderBooks object should have a list of markets
+            # Try common attribute names
+            markets = None
+            for attr in ['order_books', 'markets', 'data', 'results', 'items']:
+                if hasattr(order_books_response, attr):
+                    markets = getattr(order_books_response, attr)
+                    logger.debug(f"Found markets list in attribute: {attr}")
+                    break
+
+            if not markets:
+                # Maybe it's iterable directly
+                try:
+                    markets = list(order_books_response)
+                    logger.debug("OrderBooks object is directly iterable")
+                except TypeError:
+                    logger.error("Could not extract markets list from OrderBooks response")
+                    logger.error(f"Response type: {type(order_books_response)}")
+                    logger.error(f"Response value: {order_books_response}")
+                    return
+
+            logger.debug(f"Found {len(markets)} markets")
 
             if markets:
                 # Log first market to see structure
