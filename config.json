@@ -26,5 +26,12 @@
     "api_token": "",
     "enabled": true
   },
+  "matsu": {
+    "enabled": false,
+    "api_url": "https://distill.baa.one/api/hedge-data",
+    "auth_token": "",
+    "pool_name": "xLP",
+    "timeout": 10
+  },
   "rpc_url": "https://api.mainnet-beta.solana.com"
 }

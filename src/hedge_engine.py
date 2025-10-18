@@ -23,6 +23,7 @@ from core.action_executor import ActionExecutor
 from utils.circuit_breaker import CircuitBreakerManager
 from utils.config_validator import HedgeConfig, ValidationError
 from monitoring.metrics import MetricsCollector
+from plugins.matsu_reporter import MatsuReporter
 from pools import jlp, alp
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,9 @@ class HedgeEngine:
         self.exchange = create_exchange(self.config["exchange"])
         self.notifier = Notifier(self.config["pushover"])
 
+        # 初始化Matsu监控上报器（可选插件）
+        self.matsu_reporter = self._initialize_matsu_reporter()
+
         # 初始化决策引擎
         self.decision_engine = DecisionEngine(self.config, self.state_manager)
 
@@ -69,6 +73,32 @@ class HedgeEngine:
         # 创建完整的数据处理管道
         self.pipeline = self._create_full_pipeline()
 
+    def _initialize_matsu_reporter(self):
+        """初始化Matsu监控上报器（可选）"""
+        matsu_config = self.config.get("matsu", {})
+
+        if not matsu_config.get("enabled", False):
+            logger.info("Matsu reporter is disabled")
+            return None
+
+        if not matsu_config.get("auth_token"):
+            logger.warning("Matsu reporter enabled but auth_token is empty, disabling")
+            return None
+
+        try:
+            reporter = MatsuReporter(
+                api_url=matsu_config.get("api_url", "https://distill.baa.one/api/hedge-data"),
+                auth_token=matsu_config["auth_token"],
+                enabled=True,
+                timeout=matsu_config.get("timeout", 10),
+                pool_name=matsu_config.get("pool_name", "xLP")
+            )
+            logger.info(f"✅ Matsu reporter initialized: {reporter.pool_name}")
+            return reporter
+        except Exception as e:
+            logger.error(f"❌ Failed to initialize Matsu reporter: {e}")
+            return None
+
     def _create_full_pipeline(self):
         """创建完整的数据处理管道"""
         # 准备池子计算器
@@ -77,7 +107,7 @@ class HedgeEngine:
             "alp": alp.calculate_hedge
         }
 
-        # 使用工厂函数创建管道
+        # 使用工厂函数创建管道（包含可选的Matsu上报中间件）
         return create_hedge_pipeline(
             pool_calculators=pool_calculators,
             exchange=self.exchange,
@@ -85,7 +115,8 @@ class HedgeEngine:
             offset_calculator=calculate_offset_and_cost,
             decision_engine=self.decision_engine,
             action_executor=self.action_executor,
-            cooldown_minutes=self.config.get("cooldown_after_fill_minutes", 5)
+            cooldown_minutes=self.config.get("cooldown_after_fill_minutes", 5),
+            matsu_reporter=self.matsu_reporter  # 🆕 可选的Matsu上报插件
         )
 
     async def run_once_pipeline(self):
