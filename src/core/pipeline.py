@@ -604,6 +604,9 @@ class ApplyCooldownFilterStep(PipelineStep):
             old_pos = state.get("last_actual_position")
             new_pos = context.actual_positions.get(symbol, 0.0)
 
+            # ⭐ 保存成交前的zone（用于Part C比较）
+            old_zone_before_fill = state.get("last_zone")
+
             # 首次初始化：如果从未记录过position，现在记录
             if old_pos is None:
                 await self.state_manager.update_symbol_state(symbol, {
@@ -617,22 +620,25 @@ class ApplyCooldownFilterStep(PipelineStep):
                 # Position变化 → 订单成交了！
                 logger.info(f"  ⚡ {symbol}: Position changed {old_pos:+.4f} → {new_pos:+.4f} (Δ{new_pos - old_pos:+.4f})")
 
-                # 记录成交时间和zone（zone恶化导致的成交会重置cooldown）
+                # 记录成交时间（注意：zone在Part C之后才更新）
                 await self.state_manager.update_symbol_state(symbol, {
                     "last_fill_time": datetime.now().isoformat(),
-                    "last_zone": context.zones[symbol],  # 记录成交时的zone
                     "last_actual_position": new_pos
+                    # last_zone暂不更新，等Part C判断完再更新
                 })
 
-                logger.info(f"  📝 {symbol}: Recorded fill at zone {context.zones[symbol]}, cooldown reset")
+                logger.info(f"  📝 {symbol}: Fill detected, cooldown reset")
 
             # === Part B: 检查是否在cooldown期间 ===
             last_fill_time_str = state.get("last_fill_time")
 
             if not last_fill_time_str:
-                # 从未成交过
+                # 从未成交过，记录当前zone作为baseline
                 cooldown_status[symbol] = "normal"
-                logger.debug(f"  ✅ {symbol}: No fill history, normal mode")
+                await self.state_manager.update_symbol_state(symbol, {
+                    "last_zone": context.zones[symbol]
+                })
+                logger.debug(f"  ✅ {symbol}: No fill history, normal mode (zone={context.zones[symbol]})")
                 continue
 
             # 计算距离上次成交的时间
@@ -640,17 +646,19 @@ class ApplyCooldownFilterStep(PipelineStep):
             elapsed_min = (datetime.now() - last_fill_time).total_seconds() / 60
 
             if elapsed_min >= self.cooldown_minutes:
-                # Cooldown结束
+                # Cooldown结束，记录当前zone
                 cooldown_status[symbol] = "normal"
-                logger.debug(f"  ✅ {symbol}: Cooldown ended ({elapsed_min:.1f}min), normal mode")
+                await self.state_manager.update_symbol_state(symbol, {
+                    "last_zone": context.zones[symbol]
+                })
+                logger.debug(f"  ✅ {symbol}: Cooldown ended ({elapsed_min:.1f}min), normal mode (zone={context.zones[symbol]})")
                 continue
 
             # === Part C: Cooldown期间的判断 ===
             cooldown_remaining = self.cooldown_minutes - elapsed_min
 
-            # 重新读取state（Part A可能已更新）
-            state = await self.state_manager.get_symbol_state(symbol)
-            old_zone = state.get("last_zone")
+            # 使用成交前的zone来比较（old_zone_before_fill在Part A保存）
+            old_zone = old_zone_before_fill
             new_zone = context.zones[symbol]
 
             logger.info(f"  🧊 {symbol}: In cooldown ({cooldown_remaining:.1f}min remaining), zone {old_zone} → {new_zone}")
@@ -674,6 +682,11 @@ class ApplyCooldownFilterStep(PipelineStep):
                 # Zone改善或持平 - offset绝对值减小或不变
                 cooldown_status[symbol] = "skip"
                 logger.info(f"     → SKIP (zone improved/stable {old_zone}→{new_zone}, waiting for natural regression)")
+
+            # Part C结束后，更新last_zone为当前zone（供下次比较使用）
+            await self.state_manager.update_symbol_state(symbol, {
+                "last_zone": new_zone
+            })
 
         context.cooldown_status = cooldown_status
         logger.info(f"✅ Cooldown filter applied: {len(cooldown_status)} symbols")
