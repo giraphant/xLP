@@ -128,6 +128,7 @@ class TimingConfig:
     timeout_minutes: int = 20
     order_price_offset: float = 0.2
     close_ratio: float = 40.0
+    cooldown_after_fill_minutes: int = 5
 
     def validate(self):
         """验证时间配置"""
@@ -146,6 +147,11 @@ class TimingConfig:
 
         if not 0 < self.close_ratio <= 100:
             raise ValidationError(f"close_ratio must be between 0 and 100: {self.close_ratio}")
+
+        if self.cooldown_after_fill_minutes < 0:
+            raise ValidationError(
+                f"cooldown_after_fill_minutes cannot be negative: {self.cooldown_after_fill_minutes}"
+            )
 
 
 @dataclass
@@ -210,7 +216,8 @@ class HedgeConfig:
             "check_interval_seconds": config_dict.get("check_interval_seconds", 60),
             "timeout_minutes": config_dict.get("timeout_minutes", 20),
             "order_price_offset": config_dict.get("order_price_offset", 0.2),
-            "close_ratio": config_dict.get("close_ratio", 40.0)
+            "close_ratio": config_dict.get("close_ratio", 40.0),
+            "cooldown_after_fill_minutes": config_dict.get("cooldown_after_fill_minutes", 5)
         }
 
         initial_offset_dict = config_dict.get("initial_offset", {})
@@ -293,6 +300,8 @@ class HedgeConfig:
             config_dict["order_price_offset"] = float(os.getenv("ORDER_PRICE_OFFSET"))
         if "CLOSE_RATIO" in os.environ:
             config_dict["close_ratio"] = float(os.getenv("CLOSE_RATIO"))
+        if "COOLDOWN_AFTER_FILL_MINUTES" in os.environ:
+            config_dict["cooldown_after_fill_minutes"] = int(os.getenv("COOLDOWN_AFTER_FILL_MINUTES"))
 
         # 交易所配置
         if "exchange" not in config_dict:
@@ -411,6 +420,7 @@ class HedgeConfig:
             "timeout_minutes": self.timing.timeout_minutes,
             "order_price_offset": self.timing.order_price_offset,
             "close_ratio": self.timing.close_ratio,
+            "cooldown_after_fill_minutes": self.timing.cooldown_after_fill_minutes,
             "exchange": asdict(self.exchange),
             "pushover": asdict(self.pushover),
             "initial_offset": asdict(self.initial_offset),
