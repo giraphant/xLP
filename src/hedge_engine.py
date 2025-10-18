@@ -84,7 +84,8 @@ class HedgeEngine:
             state_manager=self.state_manager,
             offset_calculator=calculate_offset_and_cost,
             decision_engine=self.decision_engine,
-            action_executor=self.action_executor
+            action_executor=self.action_executor,
+            cooldown_minutes=self.config.get("cooldown_after_fill_minutes", 5)
         )
 
     async def run_once_pipeline(self):
