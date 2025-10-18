@@ -29,13 +29,14 @@ __all__ = [
     'FetchMarketDataStep',
     'CalculateOffsetsStep',
     'ApplyPredefinedOffsetStep',
-    'CalculateZonesStep',  # 🆕
-    'ApplyCooldownFilterStep',  # 🆕
+    'CalculateZonesStep',
+    'ApplyCooldownFilterStep',
     'DecideActionsStep',
     'ExecuteActionsStep',
     'logging_middleware',
     'timing_middleware',
-    'error_collection_middleware'
+    'error_collection_middleware',
+    'reporting_middleware'  # 🆕 Matsu监控上报中间件
 ]
 
 
@@ -905,7 +906,8 @@ def create_hedge_pipeline(
     offset_calculator,
     decision_engine,
     action_executor,
-    cooldown_minutes: int = 5
+    cooldown_minutes: int = 5,
+    matsu_reporter = None  # Optional[MatsuReporter]
 ) -> HedgePipeline:
     """
     创建完整的对冲处理管道
@@ -918,6 +920,7 @@ def create_hedge_pipeline(
         decision_engine: 决策引擎
         action_executor: 操作执行器
         cooldown_minutes: Cooldown时长（分钟）
+        matsu_reporter: Matsu监控上报器（可选，作为middleware）
 
     Returns:
         配置好的管道实例
@@ -929,14 +932,22 @@ def create_hedge_pipeline(
     pipeline.add_middleware(timing_middleware)
     pipeline.add_middleware(error_collection_middleware)
 
+    # 🆕 添加Matsu监控上报中间件（可选插件）
+    if matsu_reporter:
+        # 创建闭包，捕获matsu_reporter实例
+        async def reporting_middleware_with_reporter(context: PipelineContext, phase: str):
+            await reporting_middleware(context, phase, matsu_reporter)
+
+        pipeline.add_middleware(reporting_middleware_with_reporter)
+
     # 添加处理步骤
     pipeline.add_step(FetchPoolDataStep(pool_calculators))
     pipeline.add_step(CalculateIdealHedgesStep())
     pipeline.add_step(FetchMarketDataStep(exchange))
     pipeline.add_step(CalculateOffsetsStep(offset_calculator, state_manager))
     pipeline.add_step(ApplyPredefinedOffsetStep())  # 应用外部对冲调整
-    pipeline.add_step(CalculateZonesStep(decision_engine))  # 🆕 计算zones
-    pipeline.add_step(ApplyCooldownFilterStep(state_manager, cooldown_minutes))  # 🆕 应用cooldown过滤
+    pipeline.add_step(CalculateZonesStep(decision_engine))  # 计算zones
+    pipeline.add_step(ApplyCooldownFilterStep(state_manager, cooldown_minutes))  # 应用cooldown过滤
     pipeline.add_step(DecideActionsStep(decision_engine))
     pipeline.add_step(ExecuteActionsStep(action_executor))
 
@@ -980,3 +991,67 @@ def error_collection_middleware(context: PipelineContext, phase: str):
                 for r in errors
             ]
             logger.warning(f"Pipeline completed with {len(errors)} errors")
+
+
+async def reporting_middleware(context: PipelineContext, phase: str, matsu_reporter):
+    """
+    Matsu监控上报中间件（插件式设计）
+
+    在Pipeline完成后自动上报关键数据到Matsu监控系统
+    特点：
+    - 非侵入式：失败不影响主程序
+    - 总是执行：即使某些步骤失败也会尝试上报
+    - 解耦设计：作为观察者而非Pipeline步骤
+    """
+    if phase != "after":
+        return
+
+    if not matsu_reporter or not matsu_reporter.enabled:
+        logger.debug("MatsuReporter not configured or disabled, skipping")
+        return
+
+    try:
+        logger.info("=" * 50)
+        logger.info("📡 REPORTING TO MATSU")
+        logger.info("=" * 50)
+
+        # 检查是否有必要的数据
+        if not hasattr(context, 'ideal_hedges') or not hasattr(context, 'actual_positions'):
+            logger.warning("⚠️  Missing data for Matsu report (Pipeline may have failed early)")
+            return
+
+        # 提取理想对冲量 (来自CalculateIdealHedgesStep)
+        ideal_hedges = context.ideal_hedges  # Dict[str, float]
+
+        # 提取实际对冲量 (来自FetchMarketDataStep)
+        actual_hedges = context.actual_positions  # Dict[str, float]
+
+        # 提取平均成本 (来自CalculateOffsetsStep的offsets)
+        cost_bases = {}
+        if hasattr(context, 'offsets'):
+            for symbol, (offset, cost_basis) in context.offsets.items():
+                cost_bases[symbol] = cost_basis
+
+        # 显示上报数据
+        logger.info(f"📊 Reporting data for {len(ideal_hedges)} symbols:")
+        for symbol in ideal_hedges.keys():
+            ideal = ideal_hedges.get(symbol, 0.0)
+            actual = actual_hedges.get(symbol, 0.0)
+            cost = cost_bases.get(symbol, 0.0)
+            logger.info(f"  • {symbol}: Ideal={ideal:+.4f}, Actual={actual:+.4f}, Cost=${cost:.2f}")
+
+        # 上报到Matsu
+        success = await matsu_reporter.report(
+            ideal_hedges=ideal_hedges,
+            actual_hedges=actual_hedges,
+            cost_bases=cost_bases
+        )
+
+        if success:
+            logger.info("✅ Successfully reported to Matsu")
+        else:
+            logger.warning("⚠️  Failed to report to Matsu (non-critical)")
+
+    except Exception as e:
+        # 上报失败不应影响主程序
+        logger.error(f"❌ Error in reporting middleware: {e}", exc_info=True)
