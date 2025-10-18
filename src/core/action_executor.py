@@ -232,8 +232,15 @@ class ActionExecutor:
                     action.symbol, "stats.forced_closes"
                 )
 
-            # 重置监控状态
-            await self.state_manager.reset_symbol_monitoring(action.symbol)
+            # 清理监控状态（通过deep_merge自动保留current_zone用于cooldown判断）
+            await self.state_manager.update_symbol_state(action.symbol, {
+                "monitoring": {
+                    "active": False,
+                    "started_at": None,
+                    "order_id": None
+                    # current_zone不更新，deep_merge会保留原值用于cooldown判断
+                }
+            })
 
             # 记录指标
             await self.metrics.record_order(
