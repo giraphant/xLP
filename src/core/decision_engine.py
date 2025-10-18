@@ -242,14 +242,14 @@ class DecisionEngine:
                 in_cooldown = cooldown_elapsed < self.cooldown_after_fill_minutes
                 cooldown_remaining = self.cooldown_after_fill_minutes - cooldown_elapsed
 
-            # 冷却期内的特殊处理
-            if in_cooldown:
+            # 冷却期内的特殊处理（只在有订单监控时才应用cooldown）
+            if in_cooldown and is_monitoring:
                 logger.info(f"{symbol}: In cooldown period ({cooldown_remaining:.1f}min remaining)")
 
                 # 情况1: 回到阈值内 (Zone → None) - 允许撤单
                 if new_zone is None:
                     logger.info(f"{symbol}: Zone → None during cooldown, cancelling order")
-                    if is_monitoring and existing_order_id:
+                    if existing_order_id:
                         actions.append(TradingAction(
                             type=ActionType.CANCEL_ORDER,
                             symbol=symbol,
@@ -264,11 +264,11 @@ class DecisionEngine:
                     return actions
 
                 # 情况2: Zone恶化 (增大) - 撤单并重新挂单
-                elif current_zone is not None and new_zone > current_zone:
+                elif current_zone is not None and new_zone is not None and new_zone > current_zone:
                     logger.warning(f"{symbol}: Zone worsened from {current_zone} to {new_zone} during cooldown, re-ordering")
 
                     # 撤销旧订单
-                    if is_monitoring and existing_order_id:
+                    if existing_order_id:
                         actions.append(TradingAction(
                             type=ActionType.CANCEL_ORDER,
                             symbol=symbol,
@@ -299,7 +299,7 @@ class DecisionEngine:
                     return actions
 
                 # 情况3: Zone改善 (减小) - 等待观察，不操作
-                elif current_zone is None or new_zone < current_zone:
+                elif current_zone is not None and new_zone is not None and new_zone < current_zone:
                     logger.info(f"{symbol}: Zone improved from {current_zone} to {new_zone} during cooldown, waiting...")
                     actions.append(TradingAction(
                         type=ActionType.NO_ACTION,
