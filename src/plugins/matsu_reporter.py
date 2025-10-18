@@ -13,7 +13,7 @@ Matsu监控系统上报插件
 """
 
 import logging
-import aiohttp
+import httpx
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 
@@ -158,25 +158,22 @@ class MatsuReporter:
         url = f"{self.api_url}?token={self.auth_token}"
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    url,
-                    json=payload,
-                    timeout=aiohttp.ClientTimeout(total=self.timeout)
-                ) as response:
-                    if response.status == 200:
-                        result = await response.json()
-                        logger.info(f"✓ Matsu report successful: {result.get('message', 'OK')}")
-                        return True
-                    else:
-                        error_text = await response.text()
-                        logger.error(f"✗ Matsu report failed: {response.status} - {error_text}")
-                        return False
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(url, json=payload)
 
-        except asyncio.TimeoutError:
+                if response.status_code == 200:
+                    result = response.json()
+                    logger.info(f"✓ Matsu report successful: {result.get('message', 'OK')}")
+                    return True
+                else:
+                    error_text = response.text
+                    logger.error(f"✗ Matsu report failed: {response.status_code} - {error_text}")
+                    return False
+
+        except httpx.TimeoutException:
             logger.error(f"✗ Matsu report timeout after {self.timeout}s")
             return False
-        except aiohttp.ClientError as e:
+        except httpx.HTTPError as e:
             logger.error(f"✗ Matsu report network error: {e}")
             return False
         except Exception as e:
