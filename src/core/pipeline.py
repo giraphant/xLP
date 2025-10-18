@@ -446,10 +446,17 @@ class CalculateOffsetsStep(PipelineStep):
                 position_change = abs(actual_pos - old_actual_pos)
                 if position_change > 0.0001:  # 防止浮点误差
                     logger.info(f"  ⚡ {symbol}: Position changed from {old_actual_pos:+.4f} to {actual_pos:+.4f} (Δ{actual_pos - old_actual_pos:+.4f})")
-                    # 记录成交时间
+                    # 记录成交时间并清理订单状态（保留current_zone用于cooldown判断）
                     await self.state_manager.update_symbol_state(symbol, {
-                        "last_fill_time": datetime.now().isoformat()
+                        "last_fill_time": datetime.now().isoformat(),
+                        "monitoring": {
+                            "active": False,  # 订单已成交，不再监控
+                            "started_at": None,  # 清理开始时间
+                            "order_id": None  # 清理订单ID
+                            # current_zone保留，用于cooldown期间判断zone变化方向
+                        }
                     })
+                    logger.info(f"  🔄 {symbol}: Order filled, monitoring cleared (zone preserved for cooldown)")
 
             # 详细日志输出
             logger.info(f"📊 {symbol}:")
