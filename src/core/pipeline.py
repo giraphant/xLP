@@ -647,6 +647,9 @@ class ApplyCooldownFilterStep(PipelineStep):
 
             # === Part C: Cooldown期间的判断 ===
             cooldown_remaining = self.cooldown_minutes - elapsed_min
+
+            # 重新读取state（Part A可能已更新）
+            state = await self.state_manager.get_symbol_state(symbol)
             old_zone = state.get("last_zone")
             new_zone = context.zones[symbol]
 
@@ -657,15 +660,20 @@ class ApplyCooldownFilterStep(PipelineStep):
                 cooldown_status[symbol] = "cancel_only"
                 logger.info(f"     → CANCEL_ONLY (back within threshold)")
 
-            elif old_zone is not None and new_zone is not None and new_zone > old_zone:
-                # Zone恶化 (数字变大)
+            elif old_zone is None:
+                # 上次成交时zone=None（在阈值内），现在进入zone了，应该允许挂单
                 cooldown_status[symbol] = "normal"
-                logger.warning(f"     → NORMAL (zone worsened, re-order needed)")
+                logger.info(f"     → NORMAL (previous fill was within threshold, now in zone {new_zone})")
+
+            elif new_zone > old_zone:
+                # Zone恶化 (数字变大) - offset绝对值增大
+                cooldown_status[symbol] = "normal"
+                logger.warning(f"     → NORMAL (zone worsened {old_zone}→{new_zone}, re-order needed)")
 
             else:
-                # Zone改善或持平
+                # Zone改善或持平 - offset绝对值减小或不变
                 cooldown_status[symbol] = "skip"
-                logger.info(f"     → SKIP (zone improved/stable, waiting for natural regression)")
+                logger.info(f"     → SKIP (zone improved/stable {old_zone}→{new_zone}, waiting for natural regression)")
 
         context.cooldown_status = cooldown_status
         logger.info(f"✅ Cooldown filter applied: {len(cooldown_status)} symbols")
