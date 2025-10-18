@@ -189,6 +189,7 @@ class HedgeConfig:
     # 其他配置
     rpc_url: str = "https://api.mainnet-beta.solana.com"
     predefined_offset: Dict[str, float] = field(default_factory=dict)  # 外部对冲调整
+    matsu: Dict[str, Any] = field(default_factory=dict)  # Matsu监控上报配置
 
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]) -> "HedgeConfig":
@@ -231,7 +232,8 @@ class HedgeConfig:
             timing=TimingConfig(**timing_dict),
             initial_offset=InitialOffsetConfig(**initial_offset_dict),
             rpc_url=config_dict.get("rpc_url", "https://api.mainnet-beta.solana.com"),
-            predefined_offset=predefined_offset_dict
+            predefined_offset=predefined_offset_dict,
+            matsu=config_dict.get("matsu", {})
         )
 
     @classmethod
@@ -441,7 +443,8 @@ class HedgeConfig:
             "pushover": asdict(self.pushover),
             "initial_offset": asdict(self.initial_offset),
             "rpc_url": self.rpc_url,
-            "predefined_offset": self.predefined_offset
+            "predefined_offset": self.predefined_offset,
+            "matsu": self.matsu
         }
 
         return result
