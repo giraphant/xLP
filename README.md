@@ -307,6 +307,7 @@ PUSHOVER_ENABLED=true
 - [x] ✅ External hedge adjustment support
 - [x] ✅ Sensitive data masking in logs
 - [x] ✅ Type-safe configuration validation
+- [x] ✅ Cooldown mechanism to prevent rapid order fills
 
 **In Progress:**
 - [ ] 🚧 Additional exchanges (Binance, OKX)
