@@ -29,6 +29,8 @@ __all__ = [
     'FetchMarketDataStep',
     'CalculateOffsetsStep',
     'ApplyPredefinedOffsetStep',
+    'CalculateZonesStep',  # 🆕
+    'ApplyCooldownFilterStep',  # 🆕
     'DecideActionsStep',
     'ExecuteActionsStep',
     'logging_middleware',
@@ -69,6 +71,8 @@ class PipelineContext:
     actual_positions: Dict[str, float] = field(default_factory=dict)
     prices: Dict[str, float] = field(default_factory=dict)
     offsets: Dict[str, Tuple[float, float]] = field(default_factory=dict)  # (offset, cost_basis)
+    zones: Dict[str, Optional[int]] = field(default_factory=dict)  # Zone编号
+    cooldown_status: Dict[str, str] = field(default_factory=dict)  # "normal" | "skip" | "cancel_only"
     actions: List[Dict[str, Any]] = field(default_factory=list)
 
     # 执行结果
@@ -425,7 +429,6 @@ class CalculateOffsetsStep(PipelineStep):
             state = await self.state_manager.get_symbol_state(symbol)
             old_offset = state.get("offset", 0.0)
             old_cost = state.get("cost_basis", 0.0)
-            old_actual_pos = state.get("last_actual_position", None)
 
             # 计算新的偏移和成本
             ideal_pos = context.ideal_hedges[symbol]
@@ -440,23 +443,6 @@ class CalculateOffsetsStep(PipelineStep):
 
             # 计算USD价值
             offset_usd = abs(new_offset) * current_price
-
-            # 检测position变化（说明有成交或手动调仓）
-            if old_actual_pos is not None:  # 只有有历史记录时才检测
-                position_change = abs(actual_pos - old_actual_pos)
-                if position_change > 0.0001:  # 防止浮点误差
-                    logger.info(f"  ⚡ {symbol}: Position changed from {old_actual_pos:+.4f} to {actual_pos:+.4f} (Δ{actual_pos - old_actual_pos:+.4f})")
-                    # 记录成交时间并清理订单状态（保留current_zone用于cooldown判断）
-                    await self.state_manager.update_symbol_state(symbol, {
-                        "last_fill_time": datetime.now().isoformat(),
-                        "monitoring": {
-                            "active": False,  # 订单已成交，不再监控
-                            "started_at": None,  # 清理开始时间
-                            "order_id": None  # 清理订单ID
-                            # current_zone保留，用于cooldown期间判断zone变化方向
-                        }
-                    })
-                    logger.info(f"  🔄 {symbol}: Order filled, monitoring cleared (zone preserved for cooldown)")
 
             # 详细日志输出
             logger.info(f"📊 {symbol}:")
@@ -473,11 +459,10 @@ class CalculateOffsetsStep(PipelineStep):
             else:
                 logger.info(f"  └─ Status: ✅ BALANCED")
 
-            # 更新状态（包括actual position）
+            # 更新状态
             await self.state_manager.update_symbol_state(symbol, {
                 "offset": new_offset,
-                "cost_basis": new_cost,
-                "last_actual_position": actual_pos
+                "cost_basis": new_cost
             })
 
         context.offsets = offsets
@@ -537,6 +522,147 @@ class ApplyPredefinedOffsetStep(PipelineStep):
         return context.offsets
 
 
+class CalculateZonesStep(PipelineStep):
+    """计算Zone步骤 - 将offset转换为zone编号"""
+
+    def __init__(self, decision_engine):
+        super().__init__(
+            name="CalculateZones",
+            required=True,
+            retry_times=0,
+            timeout=5
+        )
+        self.decision_engine = decision_engine
+
+    async def _run(self, context: PipelineContext) -> Dict[str, Optional[int]]:
+        """计算所有币种的zone"""
+        zones = {}
+
+        logger.info("=" * 50)
+        logger.info("📐 CALCULATING ZONES")
+        logger.info("=" * 50)
+
+        for symbol, (offset, cost_basis) in context.offsets.items():
+            if symbol not in context.prices:
+                logger.warning(f"⚠️ Skipping {symbol} - no price data")
+                continue
+
+            # 计算offset的USD价值
+            offset_usd = abs(offset) * context.prices[symbol]
+
+            # 使用DecisionEngine的get_zone方法
+            zone = self.decision_engine.get_zone(offset_usd)
+
+            zones[symbol] = zone
+
+            # 日志输出
+            if zone is None:
+                logger.info(f"  ✅ {symbol}: ${offset_usd:.2f} → No zone (within threshold)")
+            elif zone == -1:
+                logger.warning(f"  ⚠️ {symbol}: ${offset_usd:.2f} → Zone -1 (EXCEEDED MAX!)")
+            else:
+                logger.info(f"  📍 {symbol}: ${offset_usd:.2f} → Zone {zone}")
+
+        context.zones = zones
+        logger.info(f"✅ Calculated zones for {len(zones)} symbols")
+        return zones
+
+
+class ApplyCooldownFilterStep(PipelineStep):
+    """Cooldown过滤器 - 检测成交并决定是否允许决策"""
+
+    def __init__(self, state_manager, cooldown_minutes=5):
+        super().__init__(
+            name="ApplyCooldownFilter",
+            required=True,
+            retry_times=0,
+            timeout=10
+        )
+        self.state_manager = state_manager
+        self.cooldown_minutes = cooldown_minutes
+
+    async def _run(self, context: PipelineContext) -> Dict[str, str]:
+        """
+        检测position变化并应用cooldown逻辑
+
+        返回: cooldown_status = {
+            "SOL": "normal",     # 正常决策
+            "ETH": "skip",        # Cooldown期间zone改善，跳过
+            "BTC": "cancel_only", # Cooldown期间zone→None，只撤单
+        }
+        """
+        cooldown_status = {}
+
+        logger.info("=" * 50)
+        logger.info("🧊 COOLDOWN FILTER")
+        logger.info("=" * 50)
+
+        for symbol in context.zones.keys():
+            state = await self.state_manager.get_symbol_state(symbol)
+
+            # === Part A: 检测position变化（订单成交）===
+            old_pos = state.get("last_actual_position")
+            new_pos = context.actual_positions.get(symbol, 0.0)
+
+            if old_pos is not None and abs(new_pos - old_pos) > 0.0001:
+                # Position变化 → 订单成交了！
+                logger.info(f"  ⚡ {symbol}: Position changed {old_pos:+.4f} → {new_pos:+.4f} (Δ{new_pos - old_pos:+.4f})")
+
+                # 记录成交时间和zone
+                await self.state_manager.update_symbol_state(symbol, {
+                    "last_fill_time": datetime.now().isoformat(),
+                    "last_zone": context.zones[symbol],  # 记录成交时的zone
+                    "last_actual_position": new_pos
+                })
+
+                logger.info(f"  📝 {symbol}: Recorded fill at zone {context.zones[symbol]}")
+
+            # === Part B: 检查是否在cooldown期间 ===
+            last_fill_time_str = state.get("last_fill_time")
+
+            if not last_fill_time_str:
+                # 从未成交过
+                cooldown_status[symbol] = "normal"
+                logger.debug(f"  ✅ {symbol}: No fill history, normal mode")
+                continue
+
+            # 计算距离上次成交的时间
+            last_fill_time = datetime.fromisoformat(last_fill_time_str)
+            elapsed_min = (datetime.now() - last_fill_time).total_seconds() / 60
+
+            if elapsed_min >= self.cooldown_minutes:
+                # Cooldown结束
+                cooldown_status[symbol] = "normal"
+                logger.debug(f"  ✅ {symbol}: Cooldown ended ({elapsed_min:.1f}min), normal mode")
+                continue
+
+            # === Part C: Cooldown期间的判断 ===
+            cooldown_remaining = self.cooldown_minutes - elapsed_min
+            old_zone = state.get("last_zone")
+            new_zone = context.zones[symbol]
+
+            logger.info(f"  🧊 {symbol}: In cooldown ({cooldown_remaining:.1f}min remaining), zone {old_zone} → {new_zone}")
+
+            if new_zone is None:
+                # Zone → None (回到阈值内)
+                cooldown_status[symbol] = "cancel_only"
+                logger.info(f"     → CANCEL_ONLY (back within threshold)")
+
+            elif old_zone is not None and new_zone is not None and new_zone > old_zone:
+                # Zone恶化 (数字变大)
+                cooldown_status[symbol] = "normal"
+                logger.warning(f"     → NORMAL (zone worsened, re-order needed)")
+
+            else:
+                # Zone改善或持平
+                cooldown_status[symbol] = "skip"
+                logger.info(f"     → SKIP (zone improved/stable, waiting for natural regression)")
+
+        context.cooldown_status = cooldown_status
+        logger.info(f"✅ Cooldown filter applied: {len(cooldown_status)} symbols")
+        return cooldown_status
+
+
 class DecideActionsStep(PipelineStep):
     """决策步骤 - 使用决策引擎决定需要执行的操作"""
 
@@ -555,14 +681,15 @@ class DecideActionsStep(PipelineStep):
         logger.info("🤔 DECISION ENGINE - EVALUATING ACTIONS")
         logger.info("=" * 50)
 
-        # 准备决策数据
-        market_data = {}
-
         # 显示阈值配置
         threshold_min = self.decision_engine.threshold_min_usd
         threshold_max = self.decision_engine.threshold_max_usd
         threshold_step = self.decision_engine.threshold_step_usd
         logger.info(f"⚡ Thresholds: ${threshold_min:.2f} - ${threshold_max:.2f} (Step: ${threshold_step:.2f})")
+
+        # 先处理cooldown过滤的symbols
+        actions = []
+        market_data = {}  # 只包含需要正常决策的symbols
 
         for symbol, (offset, cost_basis) in context.offsets.items():
             if symbol not in context.prices:
@@ -572,6 +699,48 @@ class DecideActionsStep(PipelineStep):
             current_price = context.prices[symbol]
             offset_usd = abs(offset) * current_price
 
+            # 显示币种评估
+            zone = context.zones.get(symbol)
+            cooldown_status = context.cooldown_status.get(symbol, "normal")
+            logger.info(f"🎯 {symbol}: Offset ${offset_usd:.2f} → Zone {zone} (Cooldown: {cooldown_status})")
+
+            # 根据cooldown状态处理
+            if cooldown_status == "skip":
+                # Cooldown期间zone改善 - 跳过决策
+                from core.decision_engine import TradingAction, ActionType
+                actions.append(TradingAction(
+                    type=ActionType.NO_ACTION,
+                    symbol=symbol,
+                    reason=f"In cooldown (zone improved), waiting for natural regression"
+                ))
+                logger.info(f"  → SKIP: {symbol} in cooldown, zone improved")
+                continue
+
+            elif cooldown_status == "cancel_only":
+                # Cooldown期间回到阈值内 - 只撤单
+                from core.decision_engine import TradingAction, ActionType
+
+                # 获取现有订单
+                state = await self.decision_engine.state_manager.get_symbol_state(symbol)
+                existing_order_id = state.get("monitoring", {}).get("order_id")
+
+                if existing_order_id:
+                    actions.append(TradingAction(
+                        type=ActionType.CANCEL_ORDER,
+                        symbol=symbol,
+                        order_id=existing_order_id,
+                        reason="Back within threshold during cooldown"
+                    ))
+
+                actions.append(TradingAction(
+                    type=ActionType.NO_ACTION,
+                    symbol=symbol,
+                    reason="Within threshold during cooldown"
+                ))
+                logger.info(f"  → CANCEL_ONLY: {symbol} back within threshold")
+                continue
+
+            # 状态为"normal"的symbols加入正常决策
             market_data[symbol] = {
                 "offset": offset,
                 "cost_basis": cost_basis,
@@ -579,12 +748,13 @@ class DecideActionsStep(PipelineStep):
                 "offset_usd": offset_usd
             }
 
-            # 显示币种评估
-            zone = self.decision_engine.get_zone(offset_usd)
-            logger.info(f"🎯 {symbol}: Offset ${offset_usd:.2f} → Zone {zone}")
-
-        # 批量决策
-        actions = await self.decision_engine.batch_decide(market_data)
+        # 批量决策（只处理normal状态的symbols）
+        if market_data:
+            logger.info(f"📋 Processing {len(market_data)} symbols with normal decision logic")
+            decision_actions = await self.decision_engine.batch_decide(market_data)
+            actions.extend(decision_actions)
+        else:
+            logger.info(f"📋 All symbols filtered by cooldown, no normal decisions needed")
 
         # 显示决策结果
         logger.info("📋 DECISIONS:")
@@ -704,7 +874,8 @@ def create_hedge_pipeline(
     state_manager,
     offset_calculator,
     decision_engine,
-    action_executor
+    action_executor,
+    cooldown_minutes: int = 5
 ) -> HedgePipeline:
     """
     创建完整的对冲处理管道
@@ -716,6 +887,7 @@ def create_hedge_pipeline(
         offset_calculator: 偏移计算函数
         decision_engine: 决策引擎
         action_executor: 操作执行器
+        cooldown_minutes: Cooldown时长（分钟）
 
     Returns:
         配置好的管道实例
@@ -733,6 +905,8 @@ def create_hedge_pipeline(
     pipeline.add_step(FetchMarketDataStep(exchange))
     pipeline.add_step(CalculateOffsetsStep(offset_calculator, state_manager))
     pipeline.add_step(ApplyPredefinedOffsetStep())  # 应用外部对冲调整
+    pipeline.add_step(CalculateZonesStep(decision_engine))  # 🆕 计算zones
+    pipeline.add_step(ApplyCooldownFilterStep(state_manager, cooldown_minutes))  # 🆕 应用cooldown过滤
     pipeline.add_step(DecideActionsStep(decision_engine))
     pipeline.add_step(ExecuteActionsStep(action_executor))
 
