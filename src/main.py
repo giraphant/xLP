@@ -24,19 +24,20 @@ from core.exceptions import (
     get_retry_delay
 )
 from utils.circuit_breaker import CircuitOpenError
+from utils.logging_config import setup_logging
 
-# 配置日志系统
+# 配置日志系统（带轮转）
 log_level = os.getenv("LOG_LEVEL", "INFO").upper()
-logging.basicConfig(
-    level=getattr(logging, log_level, logging.INFO),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
+log_file = os.getenv("LOG_FILE", "logs/hedge_engine.log")
+log_retention_days = int(os.getenv("LOG_RETENTION_DAYS", "7"))
 
-# 禁用第三方库的DEBUG日志
-logging.getLogger("httpcore").setLevel(logging.WARNING)
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("urllib3").setLevel(logging.WARNING)
+setup_logging(
+    log_level=log_level,
+    log_file=log_file,
+    rotation_type="time",  # 按时间轮转
+    retention_days=log_retention_days,
+    enable_console=True
+)
 
 
 class HedgeBot:
