@@ -604,18 +604,27 @@ class ApplyCooldownFilterStep(PipelineStep):
             old_pos = state.get("last_actual_position")
             new_pos = context.actual_positions.get(symbol, 0.0)
 
-            if old_pos is not None and abs(new_pos - old_pos) > 0.0001:
+            # 首次初始化：如果从未记录过position，现在记录
+            if old_pos is None:
+                await self.state_manager.update_symbol_state(symbol, {
+                    "last_actual_position": new_pos
+                })
+                logger.debug(f"  📝 {symbol}: Initialized position tracking at {new_pos:+.4f}")
+                old_pos = new_pos  # 更新局部变量，避免误判为position变化
+
+            # 检测position变化
+            if abs(new_pos - old_pos) > 0.0001:
                 # Position变化 → 订单成交了！
                 logger.info(f"  ⚡ {symbol}: Position changed {old_pos:+.4f} → {new_pos:+.4f} (Δ{new_pos - old_pos:+.4f})")
 
-                # 记录成交时间和zone
+                # 记录成交时间和zone（zone恶化导致的成交会重置cooldown）
                 await self.state_manager.update_symbol_state(symbol, {
                     "last_fill_time": datetime.now().isoformat(),
                     "last_zone": context.zones[symbol],  # 记录成交时的zone
                     "last_actual_position": new_pos
                 })
 
-                logger.info(f"  📝 {symbol}: Recorded fill at zone {context.zones[symbol]}")
+                logger.info(f"  📝 {symbol}: Recorded fill at zone {context.zones[symbol]}, cooldown reset")
 
             # === Part B: 检查是否在cooldown期间 ===
             last_fill_time_str = state.get("last_fill_time")
