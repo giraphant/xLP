@@ -242,8 +242,9 @@ class DecisionEngine:
                 in_cooldown = cooldown_elapsed < self.cooldown_after_fill_minutes
                 cooldown_remaining = self.cooldown_after_fill_minutes - cooldown_elapsed
 
-            # 冷却期内的特殊处理（只在有订单监控时才应用cooldown）
-            if in_cooldown and is_monitoring:
+            # 冷却期内的特殊处理
+            # 注意：订单成交后is_monitoring=False，但current_zone保留用于判断zone变化方向
+            if in_cooldown:
                 logger.info(f"{symbol}: In cooldown period ({cooldown_remaining:.1f}min remaining)")
 
                 # 情况1: 回到阈值内 (Zone → None) - 允许撤单
