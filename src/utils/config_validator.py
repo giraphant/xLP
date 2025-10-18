@@ -341,6 +341,22 @@ class HedgeConfig:
         if "RPC_URL" in os.environ:
             config_dict["rpc_url"] = os.getenv("RPC_URL")
 
+        # Matsu监控上报配置
+        if "matsu" not in config_dict:
+            config_dict["matsu"] = {}
+        if "MATSU_ENABLED" in os.environ:
+            config_dict["matsu"]["enabled"] = (
+                os.getenv("MATSU_ENABLED", "false").lower() in ("true", "1", "yes")
+            )
+        if "MATSU_AUTH_TOKEN" in os.environ:
+            config_dict["matsu"]["auth_token"] = os.getenv("MATSU_AUTH_TOKEN")
+        if "MATSU_API_URL" in os.environ:
+            config_dict["matsu"]["api_url"] = os.getenv("MATSU_API_URL")
+        if "MATSU_POOL_NAME" in os.environ:
+            config_dict["matsu"]["pool_name"] = os.getenv("MATSU_POOL_NAME")
+        if "MATSU_TIMEOUT" in os.environ:
+            config_dict["matsu"]["timeout"] = int(os.getenv("MATSU_TIMEOUT"))
+
         # 预设偏移配置（用于外部对冲调整）
         # 支持两种方式：
         # 方式1（推荐）：独立环境变量 PREDEFINED_OFFSET_SOL=-1.0
