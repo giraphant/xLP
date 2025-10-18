@@ -5,16 +5,18 @@
 
 import logging
 import sys
-from logging.handlers import RotatingFileHandler
+from logging.handlers import RotatingFileHandler, TimedRotatingFileHandler
 from pathlib import Path
 
 
 def setup_logging(
     log_level: str = "INFO",
     log_file: str = None,
-    max_bytes: int = 10 * 1024 * 1024,  # 10MB
+    max_bytes: int = 10 * 1024 * 1024,  # 10MB (size-based rotation)
     backup_count: int = 5,
-    enable_console: bool = True
+    enable_console: bool = True,
+    rotation_type: str = "time",  # "time" 或 "size"
+    retention_days: int = 7  # 时间轮转模式下保留天数
 ):
     """
     配置日志系统
@@ -22,9 +24,11 @@ def setup_logging(
     Args:
         log_level: 日志级别 (DEBUG, INFO, WARNING, ERROR, CRITICAL)
         log_file: 日志文件路径（可选）
-        max_bytes: 单个日志文件最大大小
-        backup_count: 保留的备份文件数量
+        max_bytes: 单个日志文件最大大小（size模式）
+        backup_count: 保留的备份文件数量（size模式）
         enable_console: 是否输出到控制台
+        rotation_type: 轮转类型 - "time"按时间（天），"size"按大小
+        retention_days: 时间轮转模式下保留的天数
     """
     # 解析日志级别
     level = getattr(logging, log_level.upper(), logging.INFO)
@@ -55,12 +59,25 @@ def setup_logging(
         log_path = Path(log_file)
         log_path.parent.mkdir(parents=True, exist_ok=True)
 
-        file_handler = RotatingFileHandler(
-            filename=log_file,
-            maxBytes=max_bytes,
-            backupCount=backup_count,
-            encoding='utf-8'
-        )
+        if rotation_type == "time":
+            # 按时间轮转（每天一个文件）
+            file_handler = TimedRotatingFileHandler(
+                filename=log_file,
+                when='midnight',  # 每天午夜轮转
+                interval=1,  # 每1天
+                backupCount=retention_days,  # 保留N天
+                encoding='utf-8',
+                utc=True  # 使用UTC时间
+            )
+        else:
+            # 按大小轮转
+            file_handler = RotatingFileHandler(
+                filename=log_file,
+                maxBytes=max_bytes,
+                backupCount=backup_count,
+                encoding='utf-8'
+            )
+
         file_handler.setLevel(level)
         file_handler.setFormatter(formatter)
         root_logger.addHandler(file_handler)

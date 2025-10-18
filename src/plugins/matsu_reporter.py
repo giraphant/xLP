@@ -47,11 +47,6 @@ class MatsuReporter:
         self.timeout = timeout
         self.pool_name = pool_name
 
-        if not self.enabled:
-            logger.info("MatsuReporter is disabled")
-        else:
-            logger.info(f"MatsuReporter initialized: {api_url}")
-
     async def report(
         self,
         ideal_hedges: Dict[str, float],
@@ -108,13 +103,10 @@ class MatsuReporter:
         - {pool}_actual_{symbol}: 实际对冲量
         - {pool}_cost_{symbol}: 平均成本
         """
-        logger.debug(f"Building data points - ideal: {len(ideal_hedges)}, actual: {len(actual_hedges)}, cost: {len(cost_bases)}")
-
         data_points = []
 
         # 获取所有涉及的币种
         all_symbols = set(ideal_hedges.keys()) | set(actual_hedges.keys()) | set(cost_bases.keys())
-        logger.debug(f"All symbols: {all_symbols}")
 
         for symbol in all_symbols:
             # 1. 理想对冲量
@@ -144,7 +136,6 @@ class MatsuReporter:
                     "timestamp": timestamp
                 })
 
-        logger.debug(f"Built {len(data_points)} data points for {len(all_symbols)} symbols")
         return data_points
 
     async def _send_to_matsu(self, data_points: List[Dict[str, Any]]) -> bool:
@@ -158,43 +149,29 @@ class MatsuReporter:
             bool: 是否成功
         """
         payload = {"data_points": data_points}
-        url = f"{self.api_url}?token={self.auth_token[:10]}..."  # 只显示前10个字符
-
-        logger.info(f"Sending {len(data_points)} data points to Matsu")
-        logger.debug(f"Target URL: {self.api_url}")
-        logger.debug(f"Timeout: {self.timeout}s")
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                logger.debug(f"POST {self.api_url} with {len(data_points)} data points")
                 response = await client.post(
                     f"{self.api_url}?token={self.auth_token}",
                     json=payload
                 )
 
-                logger.debug(f"Response status: {response.status_code}")
-
                 if response.status_code == 200:
-                    result = response.json()
-                    logger.info(f"✓ Matsu report successful: {result.get('message', 'OK')}")
-                    logger.debug(f"Full response: {result}")
+                    logger.debug(f"Matsu report sent ({len(data_points)} points)")
                     return True
                 else:
-                    error_text = response.text
-                    logger.error(f"✗ Matsu report failed: HTTP {response.status_code}")
-                    logger.error(f"  Response body: {error_text}")
+                    logger.error(f"Matsu report failed: HTTP {response.status_code}")
                     return False
 
         except httpx.TimeoutException:
-            logger.error(f"✗ Matsu report timeout after {self.timeout}s")
-            logger.error(f"  Target URL: {self.api_url}")
+            logger.error(f"Matsu report timeout ({self.timeout}s)")
             return False
         except httpx.HTTPError as e:
-            logger.error(f"✗ Matsu report HTTP error: {e}")
-            logger.error(f"  Error type: {type(e).__name__}")
+            logger.error(f"Matsu report error: {e}")
             return False
         except Exception as e:
-            logger.error(f"✗ Matsu report unexpected error: {e}", exc_info=True)
+            logger.error(f"Matsu report error: {e}")
             return False
 
 

@@ -75,35 +75,21 @@ class HedgeEngine:
 
     def _initialize_matsu_reporter(self):
         """初始化Matsu监控上报器（可选）"""
-        logger.info("=" * 60)
-        logger.info("🔧 Initializing Matsu Reporter")
-        logger.info("=" * 60)
-
         matsu_config = self.config.get("matsu", {})
-        logger.info(f"Matsu config found: {bool(matsu_config)}")
-        logger.info(f"Matsu enabled: {matsu_config.get('enabled', False)}")
 
         if not matsu_config.get("enabled", False):
-            logger.info("Matsu reporter is DISABLED (set MATSU_ENABLED=true to enable)")
+            logger.debug("Matsu reporter disabled")
             return None
 
         auth_token = matsu_config.get("auth_token", "")
-        logger.info(f"Matsu auth_token configured: {bool(auth_token)} (length: {len(auth_token) if auth_token else 0})")
-
         if not auth_token:
-            logger.warning("⚠️ Matsu reporter enabled but auth_token is EMPTY")
-            logger.warning("   Set MATSU_AUTH_TOKEN environment variable to enable reporting")
+            logger.warning("Matsu reporter enabled but auth_token is empty")
             return None
 
         try:
             api_url = matsu_config.get("api_url", "https://distill.baa.one/api/hedge-data")
             pool_name = matsu_config.get("pool_name", "xLP")
             timeout = matsu_config.get("timeout", 10)
-
-            logger.info(f"Creating MatsuReporter:")
-            logger.info(f"  - API URL: {api_url}")
-            logger.info(f"  - Pool Name: {pool_name}")
-            logger.info(f"  - Timeout: {timeout}s")
 
             reporter = MatsuReporter(
                 api_url=api_url,
@@ -112,12 +98,10 @@ class HedgeEngine:
                 timeout=timeout,
                 pool_name=pool_name
             )
-            logger.info(f"✅ Matsu reporter initialized successfully: {reporter.pool_name}")
-            logger.info("=" * 60)
+            logger.info(f"✅ Matsu reporter enabled: {pool_name}")
             return reporter
         except Exception as e:
-            logger.error(f"❌ Failed to initialize Matsu reporter: {e}", exc_info=True)
-            logger.info("=" * 60)
+            logger.error(f"Failed to initialize Matsu reporter: {e}")
             return None
 
     def _create_full_pipeline(self):
