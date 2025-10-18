@@ -1006,14 +1006,21 @@ async def reporting_middleware(context: PipelineContext, phase: str, matsu_repor
     if phase != "after":
         return
 
-    if not matsu_reporter or not matsu_reporter.enabled:
-        logger.debug("MatsuReporter not configured or disabled, skipping")
+    logger.debug(f"Reporting middleware - matsu_reporter: {matsu_reporter}, enabled: {matsu_reporter.enabled if matsu_reporter else 'N/A'}")
+
+    if not matsu_reporter:
+        logger.debug("MatsuReporter not configured (None), skipping report")
+        return
+
+    if not matsu_reporter.enabled:
+        logger.debug("MatsuReporter is disabled, skipping report")
         return
 
     try:
         logger.info("=" * 50)
         logger.info("📡 REPORTING TO MATSU")
         logger.info("=" * 50)
+        logger.info(f"Reporter config: pool={matsu_reporter.pool_name}, url={matsu_reporter.api_url}")
 
         # 检查是否有必要的数据
         if not hasattr(context, 'ideal_hedges') or not hasattr(context, 'actual_positions'):
