@@ -61,6 +61,7 @@ class DecisionEngine:
         self.order_price_offset = config.get("order_price_offset", 0.2)
         self.close_ratio = config.get("close_ratio", 40.0)
         self.timeout_minutes = config.get("timeout_minutes", 20)
+        self.cooldown_after_fill_minutes = config.get("cooldown_after_fill_minutes", 5)
 
         logger.info(f"DecisionEngine initialized with thresholds: "
                    f"${self.threshold_min_usd}-${self.threshold_max_usd} "
@@ -230,6 +231,84 @@ class DecisionEngine:
         if new_zone != current_zone:
             logger.info(f"{symbol}: Zone changed from {current_zone} to {new_zone}")
 
+            # 检查是否在冷却期内
+            last_fill_time_str = state.get("last_fill_time")
+            in_cooldown = False
+            cooldown_remaining = 0
+
+            if last_fill_time_str:
+                last_fill_time = datetime.fromisoformat(last_fill_time_str)
+                cooldown_elapsed = (datetime.now() - last_fill_time).total_seconds() / 60
+                in_cooldown = cooldown_elapsed < self.cooldown_after_fill_minutes
+                cooldown_remaining = self.cooldown_after_fill_minutes - cooldown_elapsed
+
+            # 冷却期内的特殊处理
+            if in_cooldown:
+                logger.info(f"{symbol}: In cooldown period ({cooldown_remaining:.1f}min remaining)")
+
+                # 情况1: 回到阈值内 (Zone → None) - 允许撤单
+                if new_zone is None:
+                    logger.info(f"{symbol}: Zone → None during cooldown, cancelling order")
+                    if is_monitoring and existing_order_id:
+                        actions.append(TradingAction(
+                            type=ActionType.CANCEL_ORDER,
+                            symbol=symbol,
+                            order_id=existing_order_id,
+                            reason=f"Back within threshold (cooldown: {cooldown_remaining:.1f}min remaining)"
+                        ))
+                    actions.append(TradingAction(
+                        type=ActionType.NO_ACTION,
+                        symbol=symbol,
+                        reason="Within threshold during cooldown"
+                    ))
+                    return actions
+
+                # 情况2: Zone恶化 (增大) - 撤单并重新挂单
+                elif current_zone is not None and new_zone > current_zone:
+                    logger.warning(f"{symbol}: Zone worsened from {current_zone} to {new_zone} during cooldown, re-ordering")
+
+                    # 撤销旧订单
+                    if is_monitoring and existing_order_id:
+                        actions.append(TradingAction(
+                            type=ActionType.CANCEL_ORDER,
+                            symbol=symbol,
+                            order_id=existing_order_id,
+                            reason=f"Zone worsened during cooldown: {current_zone} → {new_zone}"
+                        ))
+
+                    # 挂新的限价单
+                    order_price = self.calculate_order_price(cost_basis, offset)
+                    order_size = self.calculate_close_size(offset)
+                    side = "sell" if offset > 0 else "buy"
+
+                    actions.append(TradingAction(
+                        type=ActionType.PLACE_LIMIT_ORDER,
+                        symbol=symbol,
+                        side=side,
+                        size=order_size,
+                        price=order_price,
+                        reason=f"Zone worsened to {new_zone} during cooldown",
+                        metadata={
+                            "zone": new_zone,
+                            "offset": offset,
+                            "offset_usd": offset_usd,
+                            "cost_basis": cost_basis,
+                            "in_cooldown": True
+                        }
+                    ))
+                    return actions
+
+                # 情况3: Zone改善 (减小) - 等待观察，不操作
+                elif current_zone is None or new_zone < current_zone:
+                    logger.info(f"{symbol}: Zone improved from {current_zone} to {new_zone} during cooldown, waiting...")
+                    actions.append(TradingAction(
+                        type=ActionType.NO_ACTION,
+                        symbol=symbol,
+                        reason=f"Zone improved during cooldown, waiting for natural regression (cooldown: {cooldown_remaining:.1f}min remaining)"
+                    ))
+                    return actions
+
+            # 非冷却期：正常的区间变化处理
             # 撤销旧订单（如果有）
             if is_monitoring and existing_order_id:
                 actions.append(TradingAction(

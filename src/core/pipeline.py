@@ -425,6 +425,7 @@ class CalculateOffsetsStep(PipelineStep):
             state = await self.state_manager.get_symbol_state(symbol)
             old_offset = state.get("offset", 0.0)
             old_cost = state.get("cost_basis", 0.0)
+            old_actual_pos = state.get("last_actual_position", None)
 
             # 计算新的偏移和成本
             ideal_pos = context.ideal_hedges[symbol]
@@ -439,6 +440,16 @@ class CalculateOffsetsStep(PipelineStep):
 
             # 计算USD价值
             offset_usd = abs(new_offset) * current_price
+
+            # 检测position变化（说明有成交或手动调仓）
+            if old_actual_pos is not None:  # 只有有历史记录时才检测
+                position_change = abs(actual_pos - old_actual_pos)
+                if position_change > 0.0001:  # 防止浮点误差
+                    logger.info(f"  ⚡ {symbol}: Position changed from {old_actual_pos:+.4f} to {actual_pos:+.4f} (Δ{actual_pos - old_actual_pos:+.4f})")
+                    # 记录成交时间
+                    await self.state_manager.update_symbol_state(symbol, {
+                        "last_fill_time": datetime.now().isoformat()
+                    })
 
             # 详细日志输出
             logger.info(f"📊 {symbol}:")
@@ -455,10 +466,11 @@ class CalculateOffsetsStep(PipelineStep):
             else:
                 logger.info(f"  └─ Status: ✅ BALANCED")
 
-            # 更新状态
+            # 更新状态（包括actual position）
             await self.state_manager.update_symbol_state(symbol, {
                 "offset": new_offset,
-                "cost_basis": new_cost
+                "cost_basis": new_cost,
+                "last_actual_position": actual_pos
             })
 
         context.offsets = offsets
