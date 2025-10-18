@@ -207,13 +207,17 @@ class StateManager:
             target[field] = target.get(field, 0) + amount
 
     async def reset_symbol_monitoring(self, symbol: str):
-        """重置币种的监控状态"""
+        """
+        重置币种的监控状态
+
+        注意：保留current_zone用于cooldown期间判断zone变化方向
+        """
         await self.update_symbol_state(symbol, {
             "monitoring": {
                 "active": False,
                 "started_at": None,
-                "current_zone": None,
                 "order_id": None
+                # current_zone保留，用于cooldown判断
             }
         })
 
