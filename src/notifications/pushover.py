@@ -4,7 +4,10 @@
 """
 
 import httpx
+import logging
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 class Notifier:
@@ -47,11 +50,11 @@ class Notifier:
             是否发送成功
         """
         if not self.enabled:
-            print(f"[Notifier] 通知已禁用: {title or 'Notification'}")
+            logger.debug(f"Pushover disabled: {title or 'Notification'}")
             return False
 
         if not self.user_key or not self.api_token:
-            print("[Notifier] 错误: Pushover配置不完整")
+            logger.warning("Pushover credentials not configured")
             return False
 
         payload = {
@@ -72,14 +75,14 @@ class Notifier:
                 response = await client.post(self.PUSHOVER_API_URL, data=payload)
 
                 if response.status_code == 200:
-                    print(f"[Notifier] ✓ 通知已发送: {title or message[:50]}")
+                    logger.info(f"Pushover notification sent: {title or message[:50]}")
                     return True
                 else:
-                    print(f"[Notifier] ✗ 发送失败: {response.status_code} - {response.text}")
+                    logger.error(f"Pushover send failed: {response.status_code} - {response.text}")
                     return False
 
         except Exception as e:
-            print(f"[Notifier] ✗ 发送异常: {e}")
+            logger.error(f"Pushover send exception: {e}")
             return False
 
     async def alert_threshold_exceeded(
