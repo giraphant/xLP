@@ -18,7 +18,7 @@ tenacity>=8.0.0         # Retry library with exponential backoff
 prometheus-client>=0.18.0  # Industry-standard metrics collection
 
 # Circuit Breaker
-aiobreaker>=1.4.0       # Circuit breaker with native asyncio support
+aiobreaker>=1.2.0       # Circuit breaker with native asyncio support
 
 # Notifications
 apprise>=1.6.0          # Unified notification library (80+ services)
