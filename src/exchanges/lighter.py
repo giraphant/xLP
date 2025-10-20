@@ -4,6 +4,7 @@ Lighter Exchange Integration
 Based on: https://github.com/your-quantguy/perp-dex-tools
 """
 
+import sys
 import time
 import logging
 import traceback
@@ -422,8 +423,19 @@ class LighterClient:
             return order_index
 
         except Exception as e:
+            # 记录详细的错误信息和堆栈跟踪
+            exc_type, exc_value, exc_tb = sys.exc_info()
             logger.error(f"Failed to place limit order: {e}")
-            logger.error(traceback.format_exc())
+            logger.error(f"Exception type: {exc_type.__name__}")
+            logger.error(f"Exception value: {exc_value}")
+            logger.error(f"Full traceback:\n{traceback.format_exc()}")
+
+            # 尝试获取更多上下文信息
+            tb_lines = traceback.format_tb(exc_tb)
+            logger.error(f"Traceback lines ({len(tb_lines)} frames):")
+            for i, line in enumerate(tb_lines):
+                logger.error(f"Frame {i}:\n{line}")
+
             raise
 
     async def place_market_order(
