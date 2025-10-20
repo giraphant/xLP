@@ -150,14 +150,7 @@ class ActionExecutor:
             })
 
             # 记录指标
-            await self.metrics.record_order(
-                action.symbol,
-                action.side,
-                action.size,
-                action.price,
-                "limit",
-                True
-            )
+            self.metrics.record_order_placed(action.symbol, action.side, 'placed')
 
             # 增加统计
             await self.state_manager.increment_counter(
@@ -175,14 +168,7 @@ class ActionExecutor:
             logger.error(f"Failed to place limit order: {e}")
 
             # 记录失败指标
-            await self.metrics.record_order(
-                action.symbol,
-                action.side,
-                action.size,
-                action.price,
-                "limit",
-                False
-            )
+            self.metrics.record_order_placed(action.symbol, action.side, 'failed')
             self.metrics.record_error("limit_order", str(e))
 
             raise OrderPlacementError(
@@ -243,14 +229,7 @@ class ActionExecutor:
             })
 
             # 记录指标
-            await self.metrics.record_order(
-                action.symbol,
-                action.side,
-                action.size,
-                0,  # 市价单没有指定价格
-                "market",
-                True
-            )
+            self.metrics.record_order_placed(action.symbol, action.side, 'placed')
 
             return ExecutionResult(
                 action=action,
@@ -269,14 +248,7 @@ class ActionExecutor:
             )
 
             # 记录失败指标
-            await self.metrics.record_order(
-                action.symbol,
-                action.side,
-                action.size,
-                0,
-                "market",
-                False
-            )
+            self.metrics.record_order_placed(action.symbol, action.side, 'failed')
             self.metrics.record_error("market_order", str(e))
 
             raise OrderPlacementError(
@@ -320,10 +292,7 @@ class ActionExecutor:
                 )
 
                 # 记录阈值突破
-                await self.metrics.record_threshold_breach(
-                    action.symbol,
-                    action.metadata.get("offset_usd")
-                )
+                self.metrics.record_error(f'threshold_breach_{action.symbol}', 'medium')
 
             elif alert_type == "error":
                 await self.notifier.alert_error(

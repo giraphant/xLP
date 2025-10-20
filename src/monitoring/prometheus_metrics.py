@@ -147,21 +147,6 @@ class PrometheusMetrics:
         """记录订单成交"""
         ORDERS_FILLED.labels(symbol=symbol, side=side).inc()
 
-    async def record_order(self, symbol: str, side: str, size: float, price: float, order_type: str, success: bool):
-        """
-        记录订单（兼容旧接口）
-
-        Args:
-            symbol: 交易对
-            side: 买卖方向
-            size: 数量
-            price: 价格
-            order_type: 订单类型（limit/market）
-            success: 是否成功
-        """
-        status = 'placed' if success else 'failed'
-        self.record_order_placed(symbol, side, status)
-
     # ==================== 持仓指标 ====================
 
     def update_position_offset(self, symbol: str, offset: float):
