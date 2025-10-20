@@ -2,6 +2,6 @@
 Notification modules
 """
 
-from .pushover import Notifier
+from .apprise_notifier import Notifier
 
 __all__ = ['Notifier']

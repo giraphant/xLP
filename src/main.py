@@ -23,8 +23,8 @@ from core.exceptions import (
     should_retry,
     get_retry_delay
 )
-from utils.circuit_breaker import CircuitOpenError
-from utils.logging_config import setup_logging
+from utils.breakers import CircuitOpenError
+from utils.structlog_config import setup_structlog
 from tenacity import (
     AsyncRetrying,
     stop_after_attempt,
@@ -38,9 +38,10 @@ log_level = os.getenv("LOG_LEVEL", "INFO").upper()
 log_file = os.getenv("LOG_FILE", "logs/hedge_engine.log")
 log_retention_days = int(os.getenv("LOG_RETENTION_DAYS", "7"))
 
-setup_logging(
+setup_structlog(
     log_level=log_level,
     log_file=log_file,
+    use_json=False,  # 使用人类可读格式（如需 JSON 设置为 True）
     rotation_type="time",  # 按时间轮转
     retention_days=log_retention_days,
     enable_console=True

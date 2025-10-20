@@ -13,16 +13,16 @@ from pathlib import Path
 
 # 导入本地模块
 from exchanges.interface import create_exchange
-from notifications.pushover import Notifier
+from notifications.apprise_notifier import Notifier
 from core.offset_tracker import calculate_offset_and_cost
 from core.state_manager import StateManager
 from core.exceptions import HedgeEngineError, InvalidConfigError
 from core.pipeline import PipelineContext, create_hedge_pipeline
 from core.decision_engine import DecisionEngine
 from core.action_executor import ActionExecutor
-from utils.circuit_breaker import CircuitBreakerManager
+from utils.breakers import CircuitBreakerManager
 from utils.config import HedgeConfig, ValidationError
-from monitoring.metrics import MetricsCollector
+from monitoring.prometheus_metrics import PrometheusMetrics as MetricsCollector
 from monitoring.matsu_reporter import MatsuReporter
 from pools import jlp, alp
 

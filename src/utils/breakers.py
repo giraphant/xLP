@@ -1,0 +1,233 @@
+#!/usr/bin/env python3
+"""
+熔断器 - 使用 PyBreaker 成熟库
+替代手写的 circuit_breaker.py (392行 → ~30行)
+"""
+
+import logging
+from typing import Dict, Any, Optional
+import pybreaker
+
+logger = logging.getLogger(__name__)
+
+
+# ==================== 熔断器异常 ====================
+
+# 重导出 PyBreaker 的异常，保持 API 兼容性
+CircuitBreakerError = pybreaker.CircuitBreakerError
+CircuitOpenError = pybreaker.CircuitBreakerError  # 兼容旧名称
+
+
+# ==================== 状态监听器 ====================
+
+class StateChangeListener(pybreaker.CircuitBreakerListener):
+    """熔断器状态变化监听器"""
+
+    def state_change(self, breaker, old_state, new_state):
+        """状态变化时调用"""
+        logger.warning(
+            f"Circuit breaker '{breaker.name}' state changed: "
+            f"{old_state.name} -> {new_state.name}"
+        )
+
+    def before_call(self, breaker, func, *args, **kwargs):
+        """调用前"""
+        pass
+
+    def success(self, breaker):
+        """成功时"""
+        pass
+
+    def failure(self, breaker, exception):
+        """失败时"""
+        logger.debug(f"Circuit breaker '{breaker.name}' recorded failure: {exception}")
+
+
+# ==================== 预定义熔断器 ====================
+
+# 创建监听器实例
+state_listener = StateChangeListener()
+
+# 交易所 API 熔断器
+exchange_breaker = pybreaker.CircuitBreaker(
+    fail_max=5,              # 连续失败 5 次后熔断
+    reset_timeout=60,        # 熔断持续 60 秒
+    name='exchange_api',
+    listeners=[state_listener]
+)
+
+# Solana RPC 熔断器
+rpc_breaker = pybreaker.CircuitBreaker(
+    fail_max=3,
+    reset_timeout=30,
+    name='solana_rpc',
+    listeners=[state_listener]
+)
+
+# 池子数据获取熔断器
+pool_data_breaker = pybreaker.CircuitBreaker(
+    fail_max=3,
+    reset_timeout=45,
+    name='pool_data',
+    listeners=[state_listener]
+)
+
+# 通知服务熔断器
+notification_breaker = pybreaker.CircuitBreaker(
+    fail_max=10,             # 通知失败容忍度更高
+    reset_timeout=120,
+    name='notification',
+    listeners=[state_listener]
+)
+
+
+# ==================== 熔断器管理器 ====================
+
+class CircuitBreakerManager:
+    """
+    熔断器管理器 - 兼容旧接口
+
+    简化版本，使用 PyBreaker 预定义的熔断器
+    """
+
+    def __init__(self):
+        """初始化熔断器管理器"""
+        self.breakers = {
+            'exchange': exchange_breaker,
+            'rpc': rpc_breaker,
+            'pool_data': pool_data_breaker,
+            'notification': notification_breaker,
+        }
+        logger.info("Circuit breaker manager initialized with PyBreaker")
+
+    def get_breaker(self, name: str) -> pybreaker.CircuitBreaker:
+        """
+        获取熔断器
+
+        Args:
+            name: 熔断器名称
+
+        Returns:
+            PyBreaker CircuitBreaker 实例
+        """
+        if name not in self.breakers:
+            # 动态创建新熔断器
+            self.breakers[name] = pybreaker.CircuitBreaker(
+                fail_max=5,
+                reset_timeout=60,
+                name=name,
+                listeners=[state_listener]
+            )
+            logger.info(f"Created new circuit breaker: {name}")
+
+        return self.breakers[name]
+
+    async def call_with_breaker(self, name: str, func, *args, **kwargs):
+        """
+        使用熔断器调用函数（兼容旧接口）
+
+        Args:
+            name: 熔断器名称
+            func: 要调用的函数
+            *args, **kwargs: 函数参数
+
+        Returns:
+            函数返回值
+
+        Raises:
+            CircuitBreakerError: 熔断器开启时
+        """
+        breaker = self.get_breaker(name)
+
+        # PyBreaker 的异步调用
+        return await breaker.call_async(func, *args, **kwargs)
+
+    def get_stats(self, name: str) -> Dict[str, Any]:
+        """
+        获取熔断器统计信息（兼容旧接口）
+
+        Args:
+            name: 熔断器名称
+
+        Returns:
+            包含状态和统计的字典
+        """
+        breaker = self.get_breaker(name)
+
+        return {
+            'name': breaker.name,
+            'state': breaker.state.name,
+            'failure_count': breaker.fail_counter,
+            'is_open': breaker.state == pybreaker.STATE_OPEN,
+            'is_half_open': breaker.state == pybreaker.STATE_HALF_OPEN,
+            'is_closed': breaker.state == pybreaker.STATE_CLOSED,
+        }
+
+    def get_all_stats(self) -> Dict[str, Dict[str, Any]]:
+        """
+        获取所有熔断器的统计信息
+
+        Returns:
+            熔断器名称到统计信息的映射
+        """
+        return {
+            name: self.get_stats(name)
+            for name in self.breakers.keys()
+        }
+
+    def reset_breaker(self, name: str):
+        """
+        重置熔断器（兼容旧接口）
+
+        Args:
+            name: 熔断器名称
+        """
+        breaker = self.get_breaker(name)
+        breaker.close()
+        logger.info(f"Circuit breaker '{name}' has been reset")
+
+    def reset_all(self):
+        """重置所有熔断器"""
+        for name, breaker in self.breakers.items():
+            breaker.close()
+            logger.info(f"Circuit breaker '{name}' has been reset")
+
+
+# ==================== 便捷装饰器 ====================
+
+def with_circuit_breaker(breaker_name: str):
+    """
+    熔断器装饰器
+
+    Args:
+        breaker_name: 熔断器名称
+
+    Example:
+        @with_circuit_breaker('exchange')
+        async def get_position():
+            return await exchange.get_positions()
+    """
+    manager = CircuitBreakerManager()
+    breaker = manager.get_breaker(breaker_name)
+
+    def decorator(func):
+        if hasattr(func, '__call__'):
+            # 使用 PyBreaker 的装饰器
+            return breaker(func)
+        return func
+
+    return decorator
+
+
+# ==================== 全局实例 ====================
+
+# 创建全局实例（单例模式）
+_manager_instance = None
+
+
+def get_circuit_manager() -> CircuitBreakerManager:
+    """获取全局熔断器管理器实例"""
+    global _manager_instance
+    if _manager_instance is None:
+        _manager_instance = CircuitBreakerManager()
+    return _manager_instance
