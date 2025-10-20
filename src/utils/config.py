@@ -396,9 +396,9 @@ class HedgeConfig(BaseSettings):
         return {
             "jlp_amount": self.jlp_amount,
             "alp_amount": self.alp_amount,
-            "threshold_min": self.threshold_min_usd,
-            "threshold_max": self.threshold_max_usd,
-            "threshold_step": self.threshold_step_usd,
+            "threshold_min_usd": self.threshold_min_usd,
+            "threshold_max_usd": self.threshold_max_usd,
+            "threshold_step_usd": self.threshold_step_usd,
             "order_price_offset": self.order_price_offset,
             "close_ratio": self.close_ratio,
             "timeout_minutes": self.timeout_minutes,
