@@ -81,6 +81,45 @@ notification_breaker = pybreaker.CircuitBreaker(
 )
 
 
+# ==================== PyBreaker 包装类 ====================
+
+class AsyncCircuitBreakerWrapper:
+    """
+    PyBreaker 异步包装器 - 兼容旧 API
+
+    提供 async def call() 方法来包装 PyBreaker 的 call_async()
+    """
+
+    def __init__(self, pybreaker_instance: pybreaker.CircuitBreaker):
+        self._breaker = pybreaker_instance
+
+    async def call(self, func, *args, **kwargs):
+        """
+        通过熔断器调用异步函数（兼容旧 API）
+
+        Args:
+            func: 要调用的异步函数
+            *args, **kwargs: 函数参数
+
+        Returns:
+            函数返回值
+
+        Raises:
+            CircuitBreakerError: 熔断器开启时
+        """
+        return await self._breaker.call_async(func, *args, **kwargs)
+
+    @property
+    def name(self):
+        """获取熔断器名称"""
+        return self._breaker.name
+
+    @property
+    def state(self):
+        """获取熔断器状态"""
+        return self._breaker.state
+
+
 # ==================== 熔断器管理器 ====================
 
 class CircuitBreakerManager:
@@ -92,12 +131,14 @@ class CircuitBreakerManager:
 
     def __init__(self):
         """初始化熔断器管理器"""
+        import asyncio
         self.breakers = {
             'exchange': exchange_breaker,
             'rpc': rpc_breaker,
             'pool_data': pool_data_breaker,
             'notification': notification_breaker,
         }
+        self._lock = asyncio.Lock()
         logger.info("Circuit breaker manager initialized with PyBreaker")
 
     def get_breaker(self, name: str) -> pybreaker.CircuitBreaker:
@@ -191,6 +232,54 @@ class CircuitBreakerManager:
         for name, breaker in self.breakers.items():
             breaker.close()
             logger.info(f"Circuit breaker '{name}' has been reset")
+
+    async def get_or_create(
+        self,
+        name: str,
+        failure_threshold: int = 5,
+        timeout: int = 60,
+        **kwargs
+    ) -> AsyncCircuitBreakerWrapper:
+        """
+        获取或创建熔断器（兼容旧接口）
+
+        Args:
+            name: 熔断器名称
+            failure_threshold: 失败阈值（映射到 PyBreaker 的 fail_max）
+            timeout: 熔断超时时间（映射到 PyBreaker 的 reset_timeout）
+            **kwargs: 其他参数（忽略）
+
+        Returns:
+            包装后的熔断器实例
+        """
+        async with self._lock:
+            if name not in self.breakers:
+                # 动态创建新熔断器
+                self.breakers[name] = pybreaker.CircuitBreaker(
+                    fail_max=failure_threshold,
+                    reset_timeout=timeout,
+                    name=name,
+                    listeners=[state_listener]
+                )
+                logger.info(f"Created new circuit breaker: {name} (fail_max={failure_threshold}, reset_timeout={timeout}s)")
+
+            # 返回包装后的熔断器
+            return AsyncCircuitBreakerWrapper(self.breakers[name])
+
+    def cleanup_idle(self, idle_time: int = 3600):
+        """
+        清理空闲的熔断器（兼容旧接口）
+
+        Args:
+            idle_time: 空闲时间阈值（秒），PyBreaker 不需要清理，此方法为空实现
+
+        Note:
+            PyBreaker 的熔断器是轻量级的，不需要显式清理
+            此方法保留只是为了兼容旧代码
+        """
+        # PyBreaker 不需要清理空闲熔断器
+        # 只记录调试信息
+        logger.debug(f"cleanup_idle called (no-op for PyBreaker), {len(self.breakers)} breakers active")
 
 
 # ==================== 便捷装饰器 ====================
