@@ -210,7 +210,7 @@ class HedgeEngine:
 
             # 记录处理时间指标
             processing_time = time.time() - start_time
-            await self.metrics.record_processing("pipeline_run", processing_time)
+            self.metrics.record_pipeline_duration("pipeline_run", processing_time)
 
             # 定期导出指标摘要（每10次运行）
             total_runs = (await self.state_manager.get_metadata()).get("total_runs", 0)
