@@ -92,6 +92,10 @@ class MatsuConfig(BaseModel):
         default="https://stats.jup.ag",
         description="Matsu API endpoint"
     )
+    auth_token: str = Field(
+        default="",
+        description="Matsu webhook secret token"
+    )
     pool_name: str = Field(
         default="",
         description="Pool name for reporting"
@@ -100,8 +104,11 @@ class MatsuConfig(BaseModel):
     @model_validator(mode='after')
     def validate_matsu_config(self):
         """验证 Matsu 配置"""
-        if self.enabled and not self.pool_name:
-            logger.warning("Matsu enabled but pool_name not provided")
+        if self.enabled:
+            if not self.pool_name:
+                logger.warning("Matsu enabled but pool_name not provided")
+            if not self.auth_token:
+                logger.warning("Matsu enabled but auth_token not provided")
         return self
 
 
@@ -274,6 +281,11 @@ class HedgeConfig(BaseSettings):
         alias="MATSU_API_ENDPOINT",
         description="Matsu API endpoint"
     )
+    matsu_auth_token: str = Field(
+        default="",
+        alias="MATSU_AUTH_TOKEN",
+        description="Matsu webhook secret token"
+    )
     matsu_pool_name: str = Field(
         default="",
         alias="MATSU_POOL_NAME",
@@ -355,6 +367,7 @@ class HedgeConfig(BaseSettings):
         return MatsuConfig(
             enabled=self.matsu_enabled,
             api_endpoint=self.matsu_api_endpoint,
+            auth_token=self.matsu_auth_token,
             pool_name=self.matsu_pool_name,
         )
 
@@ -409,6 +422,7 @@ class HedgeConfig(BaseSettings):
             "matsu": {
                 "enabled": self.matsu_enabled,
                 "api_endpoint": self.matsu_api_endpoint,
+                "auth_token": self.matsu_auth_token,
                 "pool_name": self.matsu_pool_name,
             }
         }

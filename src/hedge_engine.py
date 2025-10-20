@@ -87,7 +87,7 @@ class HedgeEngine:
             return None
 
         try:
-            api_url = matsu_config.get("api_url", "https://distill.baa.one/api/hedge-data")
+            api_url = matsu_config.get("api_endpoint", "https://distill.baa.one/api/hedge-data")
             pool_name = matsu_config.get("pool_name", "xLP")
             timeout = matsu_config.get("timeout", 10)
 
