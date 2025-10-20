@@ -19,6 +19,7 @@ prometheus-client>=0.18.0  # Industry-standard metrics collection
 
 # Circuit Breaker
 pybreaker>=1.0.0        # Mature circuit breaker implementation
+tornado>=6.0            # Required by pybreaker's async support
 
 # Notifications
 apprise>=1.6.0          # Unified notification library (80+ services)
