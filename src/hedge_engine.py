@@ -208,9 +208,6 @@ class HedgeEngine:
             # 清理超时的订单监控
             await self.state_manager.cleanup_stale_orders()
 
-            # 清理空闲的熔断器
-            self.circuit_manager.cleanup_idle()
-
             # 记录处理时间指标
             processing_time = time.time() - start_time
             await self.metrics.record_processing("pipeline_run", processing_time)

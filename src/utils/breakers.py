@@ -266,21 +266,6 @@ class CircuitBreakerManager:
             # 返回包装后的熔断器
             return AsyncCircuitBreakerWrapper(self.breakers[name])
 
-    def cleanup_idle(self, idle_time: int = 3600):
-        """
-        清理空闲的熔断器（兼容旧接口）
-
-        Args:
-            idle_time: 空闲时间阈值（秒），PyBreaker 不需要清理，此方法为空实现
-
-        Note:
-            PyBreaker 的熔断器是轻量级的，不需要显式清理
-            此方法保留只是为了兼容旧代码
-        """
-        # PyBreaker 不需要清理空闲熔断器
-        # 只记录调试信息
-        logger.debug(f"cleanup_idle called (no-op for PyBreaker), {len(self.breakers)} breakers active")
-
 
 # ==================== 便捷装饰器 ====================
 
