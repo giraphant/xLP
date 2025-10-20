@@ -51,8 +51,8 @@ state_listener = StateChangeListener()
 
 # 交易所 API 熔断器
 exchange_breaker = aiobreaker.CircuitBreaker(
-    fail_max=5,                          # 连续失败 5 次后熔断
-    reset_timeout=timedelta(seconds=60), # 熔断持续 60 秒
+    fail_max=5,                             # 连续失败 5 次后熔断
+    timeout_duration=timedelta(seconds=60), # 熔断持续 60 秒
     name='exchange_api',
     listeners=[state_listener]
 )
@@ -60,7 +60,7 @@ exchange_breaker = aiobreaker.CircuitBreaker(
 # Solana RPC 熔断器
 rpc_breaker = aiobreaker.CircuitBreaker(
     fail_max=3,
-    reset_timeout=timedelta(seconds=30),
+    timeout_duration=timedelta(seconds=30),
     name='solana_rpc',
     listeners=[state_listener]
 )
@@ -68,15 +68,15 @@ rpc_breaker = aiobreaker.CircuitBreaker(
 # 池子数据获取熔断器
 pool_data_breaker = aiobreaker.CircuitBreaker(
     fail_max=3,
-    reset_timeout=timedelta(seconds=45),
+    timeout_duration=timedelta(seconds=45),
     name='pool_data',
     listeners=[state_listener]
 )
 
 # 通知服务熔断器
 notification_breaker = aiobreaker.CircuitBreaker(
-    fail_max=10,                          # 通知失败容忍度更高
-    reset_timeout=timedelta(seconds=120),
+    fail_max=10,                             # 通知失败容忍度更高
+    timeout_duration=timedelta(seconds=120),
     name='notification',
     listeners=[state_listener]
 )
@@ -156,7 +156,7 @@ class CircuitBreakerManager:
             # 动态创建新熔断器
             self.breakers[name] = aiobreaker.CircuitBreaker(
                 fail_max=5,
-                reset_timeout=timedelta(seconds=60),
+                timeout_duration=timedelta(seconds=60),
                 name=name,
                 listeners=[state_listener]
             )
@@ -258,11 +258,11 @@ class CircuitBreakerManager:
                 # 动态创建新熔断器
                 self.breakers[name] = aiobreaker.CircuitBreaker(
                     fail_max=failure_threshold,
-                    reset_timeout=timedelta(seconds=timeout),
+                    timeout_duration=timedelta(seconds=timeout),
                     name=name,
                     listeners=[state_listener]
                 )
-                logger.info(f"Created new circuit breaker: {name} (fail_max={failure_threshold}, reset_timeout={timeout}s)")
+                logger.info(f"Created new circuit breaker: {name} (fail_max={failure_threshold}, timeout_duration={timeout}s)")
 
             # 返回包装后的熔断器
             return AsyncCircuitBreakerWrapper(self.breakers[name])
