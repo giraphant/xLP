@@ -92,19 +92,13 @@ def setup_structlog(
         )
 
     # 配置 Structlog 处理器
+    # 注意：移除了 CallsiteParameterAdder（文件名、行号、函数名）以提高可读性
+    # 如果需要调试信息，可以临时启用或查看异常的 stack trace
     shared_processors = [
         # 添加日志级别
         structlog.stdlib.add_log_level,
         # 添加时间戳
         structlog.processors.TimeStamper(fmt="iso", utc=True),
-        # 添加调用者信息（文件名、行号、函数名）
-        structlog.processors.CallsiteParameterAdder(
-            [
-                structlog.processors.CallsiteParameter.FILENAME,
-                structlog.processors.CallsiteParameter.LINENO,
-                structlog.processors.CallsiteParameter.FUNC_NAME,
-            ]
-        ),
         # 添加异常信息
         structlog.processors.format_exc_info,
         # 添加栈信息（仅在异常时）
