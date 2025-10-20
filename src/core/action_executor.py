@@ -165,7 +165,9 @@ class ActionExecutor:
             )
 
         except Exception as e:
+            import traceback
             logger.error(f"Failed to place limit order: {e}")
+            logger.error(f"Full traceback:\n{traceback.format_exc()}")
 
             # 记录失败指标
             self.metrics.record_order_placed(action.symbol, action.side, 'failed')
@@ -239,7 +241,9 @@ class ActionExecutor:
             )
 
         except Exception as e:
+            import traceback
             logger.error(f"Failed to place market order: {e}")
+            logger.error(f"Full traceback:\n{traceback.format_exc()}")
 
             # 市价单失败是严重问题
             await self.notifier.alert_critical_error(
