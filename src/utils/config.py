@@ -89,7 +89,7 @@ class MatsuConfig(BaseModel):
         description="Enable Matsu monitoring"
     )
     api_endpoint: str = Field(
-        default="https://stats.jup.ag",
+        default="https://distill.baa.one/api/hedge-data",
         description="Matsu API endpoint"
     )
     auth_token: str = Field(
@@ -277,7 +277,7 @@ class HedgeConfig(BaseSettings):
         description="Enable Matsu monitoring"
     )
     matsu_api_endpoint: str = Field(
-        default="https://stats.jup.ag",
+        default="https://distill.baa.one/api/hedge-data",
         alias="MATSU_API_ENDPOINT",
         description="Matsu API endpoint"
     )
