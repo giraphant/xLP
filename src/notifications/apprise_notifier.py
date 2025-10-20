@@ -248,9 +248,9 @@ class Notifier:
             priority=1
         )
 
-    async def alert_threshold_exceeded(self, symbol: str, offset: float, threshold: float):
+    async def alert_threshold_exceeded(self, symbol: str, offset_usd: float, offset: float, current_price: float):
         """阈值超限通知"""
-        message = f"Offset ${abs(offset):.2f} exceeded threshold ${threshold:.2f}"
+        message = f"Offset ${abs(offset_usd):.2f} ({offset:+.4f} {symbol}) @ ${current_price:.2f}"
         await self.send(
             message=message,
             title=f"⚠️ {symbol} Threshold",
