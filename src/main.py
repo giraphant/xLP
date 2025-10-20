@@ -25,6 +25,13 @@ from core.exceptions import (
 )
 from utils.circuit_breaker import CircuitOpenError
 from utils.logging_config import setup_logging
+from tenacity import (
+    AsyncRetrying,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type,
+    before_sleep_log
+)
 
 # 配置日志系统（带轮转）
 log_level = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -117,18 +124,22 @@ class HedgeBot:
                     break
 
                 except RecoverableError as e:
-                    # 可恢复错误，使用指数退避重试
-                    retry_attempt += 1
-                    retry_delay = get_retry_delay(e, retry_attempt)
+                    # 可恢复错误，使用 Tenacity 自动重试（指数退避）
+                    self.logger.warning(f"可恢复错误: {e}")
 
-                    if should_retry(e, retry_attempt):
-                        self.logger.warning(f"可恢复错误: {e}")
-                        self.logger.info(f"将在 {retry_delay} 秒后重试 (尝试 {retry_attempt}/{e.max_retries})")
-                        await asyncio.sleep(retry_delay)
-                    else:
-                        self.logger.error(f"重试次数已达上限: {e}")
+                    # 使用 Tenacity 进行重试
+                    try:
+                        async for attempt in AsyncRetrying(
+                            stop=stop_after_attempt(e.max_retries),
+                            wait=wait_exponential(min=1, max=60),
+                            before_sleep=before_sleep_log(self.logger, logging.INFO)
+                        ):
+                            with attempt:
+                                await self.engine.run_once()
+                                self.error_count = 0  # 重试成功，重置错误计数
+                    except Exception:
+                        self.logger.error(f"重试失败: {e}")
                         self.error_count += 1
-                        retry_attempt = 0
                         await asyncio.sleep(interval)
 
                 except HedgeEngineError as e:

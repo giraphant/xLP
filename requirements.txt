@@ -9,6 +9,11 @@ git+https://github.com/elliottech/lighter-python.git@d0009799970aad54ebb940aa3dc
 # Notifications
 # httpx already included above for Pushover
 
+# Configuration and Retry
+pydantic>=2.0.0         # Data validation and settings management
+pydantic-settings>=2.0.0  # Settings management from env vars
+tenacity>=8.0.0         # Retry library with exponential backoff
+
 # Optional: Development and testing
 pytest>=7.4.0
 pytest-asyncio>=0.21.0

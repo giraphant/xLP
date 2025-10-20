@@ -21,9 +21,9 @@ from core.pipeline import PipelineContext, create_hedge_pipeline
 from core.decision_engine import DecisionEngine
 from core.action_executor import ActionExecutor
 from utils.circuit_breaker import CircuitBreakerManager
-from utils.config_validator import HedgeConfig, ValidationError
+from utils.config import HedgeConfig, ValidationError
 from monitoring.metrics import MetricsCollector
-from plugins.matsu_reporter import MatsuReporter
+from monitoring.matsu_reporter import MatsuReporter
 from pools import jlp, alp
 
 logger = logging.getLogger(__name__)
@@ -33,9 +33,9 @@ class HedgeEngine:
     def __init__(self, config_path: str = "config.json"):
         self.config_path = Path(config_path)
 
-        # 使用新的配置验证器加载配置
+        # 使用 Pydantic 配置加载（自动从环境变量和 .env 文件读取）
         try:
-            self.validated_config = HedgeConfig.from_env_and_file(self.config_path)
+            self.validated_config = HedgeConfig()
             self.config = self.validated_config.to_dict()  # 兼容旧代码
             logger.info(self.validated_config.get_summary())
         except ValidationError as e:
