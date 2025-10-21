@@ -20,7 +20,6 @@ from core.exceptions import (
     CriticalError,
     ConfigError
 )
-from utils.breakers import CircuitOpenError
 from utils.structlog_config import setup_structlog
 from tenacity import (
     AsyncRetrying,
@@ -105,14 +104,6 @@ class HedgeBot:
                     self.logger.error("引擎执行超时")
                     self.error_count += 1
 
-                except CircuitOpenError as e:
-                    # 熔断器开启，等待更长时间
-                    self.logger.warning(f"熔断器开启: {e}")
-                    if e.retry_after:
-                        await asyncio.sleep(e.retry_after)
-                    else:
-                        await asyncio.sleep(interval * 2)
-
                 except CriticalError as e:
                     # 严重错误，立即停止
                     self.logger.critical(f"严重错误: {e}")
@@ -168,19 +159,6 @@ class HedgeBot:
         """优雅关闭"""
         self.logger.info("正在执行优雅关闭...")
         self.running = False
-
-        if self.engine:
-            try:
-                # 显示熔断器状态
-                breaker_stats = self.engine.circuit_manager.get_all_stats()
-                if breaker_stats:
-                    self.logger.info("熔断器最终状态:")
-                    for name, stats in breaker_stats.items():
-                        self.logger.info(f"  {name}: {stats['state']} (失败: {stats['failure_count']})")
-
-            except Exception as e:
-                self.logger.error(f"关闭时出错: {e}")
-
         self.logger.info("对冲引擎已停止")
 
 

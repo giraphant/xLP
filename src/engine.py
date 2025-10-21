@@ -22,7 +22,6 @@ from utils.notifier import Notifier
 from utils.state_manager import StateManager
 from core.exceptions import HedgeEngineError, InvalidConfigError
 from utils.config import HedgeConfig, ValidationError
-from utils.breakers import CircuitBreakerManager
 from utils.matsu_reporter import MatsuReporter
 from pools import jlp, alp
 
@@ -53,7 +52,6 @@ class HedgeEngine:
 
         # 初始化组件
         self.state_manager = StateManager()
-        self.circuit_manager = CircuitBreakerManager()
         self.exchange = create_exchange(self.config["exchange"])
         self.notifier = Notifier(self.config["pushover"])
 
@@ -151,6 +149,13 @@ class HedgeEngine:
             logger.error(f"❌ Engine cycle failed: {e}")
             import traceback
             logger.error(f"Full traceback:\n{traceback.format_exc()}")
+
+            # 发送系统错误警报
+            try:
+                await self.notifier.alert_system_error(f"引擎错误: {e}")
+            except Exception as notify_err:
+                logger.error(f"Failed to send alert: {notify_err}")
+
             raise HedgeEngineError(f"Engine cycle failed: {e}")
 
     async def run_once(self):
