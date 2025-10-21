@@ -93,17 +93,11 @@ class HedgeConfig(BaseSettings):
     close_ratio: float = Field(default=40.0, gt=0, le=100)
     cooldown_after_fill_minutes: int = Field(default=5, ge=0)
 
-    # 初始偏移
+    # 初始偏移（其他平台的持仓）
     initial_offset_sol: float = Field(default=0.0, alias="INITIAL_OFFSET_SOL")
     initial_offset_eth: float = Field(default=0.0, alias="INITIAL_OFFSET_ETH")
     initial_offset_btc: float = Field(default=0.0, alias="INITIAL_OFFSET_BTC")
     initial_offset_bonk: float = Field(default=0.0, alias="INITIAL_OFFSET_BONK")
-
-    # 预定义偏移
-    predefined_offset_sol: float = Field(default=0.0, alias="PREDEFINED_OFFSET_SOL")
-    predefined_offset_eth: float = Field(default=0.0, alias="PREDEFINED_OFFSET_ETH")
-    predefined_offset_btc: float = Field(default=0.0, alias="PREDEFINED_OFFSET_BTC")
-    predefined_offset_bonk: float = Field(default=0.0, alias="PREDEFINED_OFFSET_BONK")
 
     # RPC
     rpc_url: str = "https://api.mainnet-beta.solana.com"
@@ -187,21 +181,12 @@ class HedgeConfig(BaseSettings):
         )
 
     def get_initial_offset(self) -> Dict[str, float]:
-        """获取初始偏移字典"""
+        """获取初始偏移字典（其他平台的持仓）"""
         return {
             "SOL": self.initial_offset_sol,
             "ETH": self.initial_offset_eth,
             "BTC": self.initial_offset_btc,
             "BONK": self.initial_offset_bonk,
-        }
-
-    def get_predefined_offset(self) -> Dict[str, float]:
-        """获取预定义偏移字典"""
-        return {
-            "SOL": self.predefined_offset_sol,
-            "ETH": self.predefined_offset_eth,
-            "BTC": self.predefined_offset_btc,
-            "BONK": self.predefined_offset_bonk,
         }
 
     def to_dict(self) -> Dict[str, Any]:
@@ -220,7 +205,6 @@ class HedgeConfig(BaseSettings):
             "check_interval_seconds": self.check_interval_seconds,
             "cooldown_after_fill_minutes": self.cooldown_after_fill_minutes,
             "initial_offset": self.get_initial_offset(),
-            "predefined_offset": self.get_predefined_offset(),
             "rpc_url": self.rpc_url,
             "exchange": {
                 "name": self.exchange_name,

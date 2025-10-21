@@ -6,7 +6,6 @@
 2. 获取市场数据（调用 exchanges/）
 3. 计算理想对冲
 4. 计算偏移和成本
-5. 应用预定义偏移
 
 返回：准备好的完整数据字典
 """
@@ -59,9 +58,6 @@ async def prepare_data(
         prices,
         state_manager
     )
-
-    # 5. 应用预定义偏移
-    offsets = _apply_predefined_offsets(offsets, prices, config)
 
     return {
         "symbols": symbols,
@@ -269,39 +265,3 @@ async def _calculate_offsets(
                    f"(${offset_usd:.2f}) cost=${cost:.2f}")
 
     return offsets
-
-
-def _apply_predefined_offsets(
-    offsets: Dict[str, Tuple[float, float]],
-    prices: Dict[str, float],
-    config: Dict[str, Any]
-) -> Dict[str, Tuple[float, float]]:
-    """
-    应用预定义偏移（纯函数）
-
-    Returns:
-        {symbol: (adjusted_offset, cost_basis)}
-    """
-    predefined = config.get("predefined_offset", {})
-
-    if not predefined:
-        return offsets
-
-    logger.info("=" * 50)
-    logger.info("⚙️  APPLYING PREDEFINED OFFSETS")
-    logger.info("=" * 50)
-
-    adjusted_offsets = {}
-    for symbol, (offset, cost) in offsets.items():
-        predefined_offset = predefined.get(symbol, 0.0)
-
-        if predefined_offset != 0:
-            new_offset = offset - predefined_offset
-            offset_usd = abs(new_offset) * prices[symbol]
-            logger.info(f"  • {symbol}: {offset:+.4f} - {predefined_offset:+.4f} = {new_offset:+.4f} "
-                       f"(${offset_usd:.2f})")
-            adjusted_offsets[symbol] = (new_offset, cost)
-        else:
-            adjusted_offsets[symbol] = (offset, cost)
-
-    return adjusted_offsets
