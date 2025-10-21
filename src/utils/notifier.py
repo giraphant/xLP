@@ -68,9 +68,15 @@ class Notifier:
 
             if user_key and api_token:
                 # Apprise Pushover URL 格式: pover://user@token
-                self.apobj.add(f'pover://{user_key}@{api_token}', tag='pushover')
-                self.enabled = True
-                logger.info("Pushover notification enabled")
+                url = f'pover://{user_key}@{api_token}'
+                logger.info(f"Adding Pushover service: user={user_key[:4]}...{user_key[-4:]}, token={api_token[:4]}...{api_token[-4:]}")
+
+                result = self.apobj.add(url, tag='pushover')
+                if result:
+                    self.enabled = True
+                    logger.info("✅ Pushover notification enabled")
+                else:
+                    logger.error("❌ Failed to add Pushover service (invalid URL format?)")
             else:
                 logger.warning("Pushover enabled but credentials not provided")
 
@@ -166,6 +172,7 @@ class Notifier:
 
         try:
             logger.info(f"Sending notification: {title or message[:50]}")
+            logger.debug(f"Apprise has {len(self.apobj)} service(s) configured")
 
             # 发送通知
             success = await self.apobj.async_notify(
@@ -179,6 +186,7 @@ class Notifier:
                 logger.info(f"✅ Notification sent successfully: {title}")
             else:
                 logger.error(f"❌ Notification failed: {title}")
+                logger.error(f"   Apprise returned False (check credentials or URL format)")
 
             return success
 
