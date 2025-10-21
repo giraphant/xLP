@@ -158,13 +158,15 @@ class Notifier:
             是否发送成功
         """
         if not self.enabled:
-            logger.debug(f"Notifications disabled: {title or message[:50]}")
+            logger.warning(f"Notifications disabled, skipping: {title or message[:50]}")
             return False
 
         # 映射优先级到 NotifyType
         notify_type = self._priority_to_notify_type(priority)
 
         try:
+            logger.info(f"Sending notification: {title or message[:50]}")
+
             # 发送通知
             success = await self.apobj.async_notify(
                 title=title or 'Hedge Engine',
@@ -174,14 +176,14 @@ class Notifier:
             )
 
             if success:
-                logger.info(f"Notification sent: {title or message[:50]}")
+                logger.info(f"✅ Notification sent successfully: {title}")
             else:
-                logger.warning(f"Failed to send notification: {title or message[:50]}")
+                logger.error(f"❌ Notification failed: {title}")
 
             return success
 
         except Exception as e:
-            logger.error(f"Error sending notification: {e}")
+            logger.error(f"❌ Error sending notification: {e}", exc_info=True)
             return False
 
     def _priority_to_notify_type(self, priority: int) -> NotifyType:
