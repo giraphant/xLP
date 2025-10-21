@@ -133,12 +133,9 @@ def _calculate_ideal_hedges(pool_data: Dict[str, Dict[str, Any]]) -> Dict[str, f
     for pool_type, positions in pool_data.items():
         logger.info(f"📈 {pool_type.upper()} Pool Contributions:")
         for symbol, data in positions.items():
-            # 符号规范化：WBTC → BTC
-            exchange_symbol = "BTC" if symbol == "WBTC" else symbol
-
             # 初始化
-            if exchange_symbol not in merged_hedges:
-                merged_hedges[exchange_symbol] = 0
+            if symbol not in merged_hedges:
+                merged_hedges[symbol] = 0
 
             # 提取数量
             amount = data["amount"] if isinstance(data, dict) else data
@@ -147,9 +144,9 @@ def _calculate_ideal_hedges(pool_data: Dict[str, Dict[str, Any]]) -> Dict[str, f
             hedge_amount = -amount
 
             # 累加
-            merged_hedges[exchange_symbol] += hedge_amount
+            merged_hedges[symbol] += hedge_amount
 
-            logger.info(f"  • {symbol} → {exchange_symbol}: {hedge_amount:+.4f} (short)")
+            logger.info(f"  • {symbol}: {hedge_amount:+.4f} (short)")
 
     # 显示最终的合并结果
     logger.info("📊 MERGED IDEAL POSITIONS:")

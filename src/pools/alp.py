@@ -149,7 +149,9 @@ async def calculate_hedge(alp_amount: float) -> dict:
                         "per_alp": per_alp * jitosol_to_sol_ratio,
                     }
             else:
-                hedge_positions[symbol] = {
+                # 符号规范化：WBTC → BTC
+                exchange_symbol = "BTC" if symbol == "WBTC" else symbol
+                hedge_positions[exchange_symbol] = {
                     "amount": hedge_amount,
                     "per_alp": per_alp,
                 }
@@ -177,8 +179,7 @@ async def main():
         print()
 
         for symbol, data in positions.items():
-            exchange_symbol = "BTC" if symbol == "WBTC" else symbol
-            print(f"{exchange_symbol:<8} {data['amount']:>14,.8f}")
+            print(f"{symbol:<8} {data['amount']:>14,.8f}")
 
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)

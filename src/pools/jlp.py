@@ -97,12 +97,15 @@ async def calculate_hedge(jlp_amount: float) -> dict:
             if symbol in STABLECOINS:
                 continue
 
+            # 符号规范化：WBTC → BTC
+            exchange_symbol = "BTC" if symbol == "WBTC" else symbol
+
             data = await get_custody_data(client, custody_addr, decimals)
             net_exposure = data["owned"] - data["locked"] + data["short_oi"] + data["fees"]
             per_jlp = net_exposure / total_supply
             hedge_amount = per_jlp * jlp_amount
 
-            hedge_positions[symbol] = {
+            hedge_positions[exchange_symbol] = {
                 "amount": hedge_amount,
                 "per_jlp": per_jlp,
             }
@@ -130,8 +133,7 @@ async def main():
         print()
 
         for symbol, data in positions.items():
-            exchange_symbol = "BTC" if symbol == "WBTC" else symbol
-            print(f"{exchange_symbol:<8} {data['amount']:>14,.8f}")
+            print(f"{symbol:<8} {data['amount']:>14,.8f}")
 
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
