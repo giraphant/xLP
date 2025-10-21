@@ -52,7 +52,6 @@ xLP/
 │       └── exchange_helpers.py   # Stateless exchange functions
 │
 ├── tests/                        # Test suite (84 passed)
-├── docs/                         # Deployment docs
 ├── Dockerfile                    # Container image
 ├── docker-compose.yml            # One-command deployment
 └── config.json                   # Configuration (optional)
@@ -130,7 +129,7 @@ Positions tracked by symbol (SOL, ETH, BTC, BONK), not by pool. JLP and ALP posi
 
 ## Quick Start
 
-**🐳 Recommended: Docker Deployment** (see [docs/QUICKSTART.md](docs/QUICKSTART.md))
+**🐳 Recommended: Docker Deployment**
 
 ```bash
 # 1. Clone and configure
@@ -235,13 +234,6 @@ class SymbolState:
 ```
 
 State is persisted to `data/state.json` for crash recovery.
-
-## Documentation
-
-- [ARCHITECTURE.md](docs/ARCHITECTURE.md) - Detailed architecture documentation
-- [QUICKSTART.md](docs/QUICKSTART.md) - Quick deployment guide
-- [DOCKER_DEPLOYMENT.md](docs/DOCKER_DEPLOYMENT.md) - Docker setup
-- [PRODUCTION_CHECKLIST.md](docs/PRODUCTION_CHECKLIST.md) - Production checklist
 
 ## Safety Features
 
