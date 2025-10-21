@@ -19,10 +19,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # 复制源代码
 COPY src/ ./src/
-COPY state_template.json .
-
-# config.json（可选，环境变量优先，但保留用于本地测试）
-COPY config.json .
 
 # 创建必要的目录（用于volume挂载）
 RUN mkdir -p /app/logs

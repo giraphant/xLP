@@ -54,10 +54,10 @@ xLP/
 ├── tests/                        # Test suite (84 passed)
 ├── deploy/                       # Deployment files
 │   ├── Dockerfile                # Container image
-│   ├── docker-compose.yml        # Service orchestration
 │   ├── .env.example              # Environment template
 │   └── README.md                 # Deployment guide
-└── config.json                   # Configuration (optional)
+├── docker-compose.yml            # Docker orchestration
+└── requirements.txt              # Python dependencies
 ```
 
 **Key principles**:
