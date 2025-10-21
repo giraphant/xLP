@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-对冲引擎 V2 - 三步架构
+对冲引擎 V2 - 四步架构
 
-使用 prepare/decide/execute 三步流程，简洁清晰
+使用 prepare/decide/execute/report 四步流程，简洁清晰
 """
 
 import logging
@@ -10,10 +10,11 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-# 导入三步核心模块
+# 导入四步核心模块
 from core.prepare import prepare_data
 from core.decide import decide_actions
 from core.execute import execute_actions
+from core.report import generate_reports
 
 # 导入基础设施
 from exchanges import create_exchange
@@ -31,12 +32,13 @@ logger = logging.getLogger(__name__)
 
 class HedgeEngineV2:
     """
-    对冲引擎 V2 - 三步架构
+    对冲引擎 V2 - 四步架构
 
     流程：
     1. Prepare - 准备数据
     2. Decide - 做出决策
     3. Execute - 执行操作
+    4. Report - 生成报告
     """
 
     def __init__(self, config_path: str = "config.json"):
@@ -103,7 +105,7 @@ class HedgeEngineV2:
         """
         执行一次完整的对冲检查循环
 
-        三步流程：Prepare → Decide → Execute
+        四步流程：Prepare → Decide → Execute → Report
         """
         start_time = time.time()
         logger.info(f"{'='*70}")
@@ -134,12 +136,14 @@ class HedgeEngineV2:
                 self.notifier
             )
 
-            # ========== 步骤 4: 报告（可选） ==========
-            await self._generate_reports(data, results)
-
-            # ========== 步骤 5: Matsu上报（可选） ==========
-            if self.matsu_reporter:
-                await self._report_to_matsu(data)
+            # ========== 步骤 4: 报告 ==========
+            await generate_reports(
+                data,
+                results,
+                self.state_manager,
+                self.config,
+                self.matsu_reporter
+            )
 
             # 最终摘要
             duration = time.time() - start_time
@@ -152,65 +156,6 @@ class HedgeEngineV2:
             import traceback
             logger.error(f"Full traceback:\n{traceback.format_exc()}")
             raise HedgeEngineError(f"Engine cycle failed: {e}")
-
-    async def _generate_reports(self, data: dict, results: list):
-        """生成详细报告"""
-        import os
-        if os.getenv("ENABLE_DETAILED_REPORTS", "true").lower() not in ("true", "1", "yes"):
-            return
-
-        logger.info("=" * 70)
-        logger.info("📊 POSITION SUMMARY")
-        logger.info("=" * 70)
-
-        total_offset_usd = 0
-
-        for symbol in data["symbols"]:
-            if symbol not in data["offsets"] or symbol not in data["prices"]:
-                continue
-
-            offset, cost_basis = data["offsets"][symbol]
-            price = data["prices"][symbol]
-            offset_usd = abs(offset) * price
-            total_offset_usd += offset_usd
-
-            # 获取状态
-            state = await self.state_manager.get_symbol_state(symbol)
-            monitoring = state.get("monitoring", {})
-
-            status = "🔴 LONG" if offset > 0 else ("🟢 SHORT" if offset < 0 else "✅ BALANCED")
-
-            logger.info(f"  {status} {symbol}:")
-            logger.info(f"    • Offset: {offset:+.4f} (${offset_usd:.2f})")
-            logger.info(f"    • Cost: ${cost_basis:.2f}")
-
-            if monitoring.get("active"):
-                logger.info(f"    • Order: {monitoring.get('order_id')} (zone {monitoring.get('current_zone')})")
-
-        logger.info(f"  📊 Total Exposure: ${total_offset_usd:.2f}")
-
-    async def _report_to_matsu(self, data: dict):
-        """上报数据到 Matsu（可选）"""
-        if not self.matsu_reporter:
-            return
-
-        try:
-            hedge_data = {
-                "timestamp": datetime.now().isoformat(),
-                "ideal_hedges": data["ideal_hedges"],
-                "positions": data["positions"],
-                "prices": data["prices"],
-                "offsets": {
-                    symbol: {"offset": offset, "cost_basis": cost}
-                    for symbol, (offset, cost) in data["offsets"].items()
-                }
-            }
-
-            await self.matsu_reporter.report_hedge_data(hedge_data)
-            logger.debug("✅ Reported to Matsu")
-
-        except Exception as e:
-            logger.warning(f"Failed to report to Matsu: {e}")
 
     async def run_once(self):
         """执行一次检查循环 - 兼容接口"""
