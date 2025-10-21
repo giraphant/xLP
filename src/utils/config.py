@@ -122,7 +122,7 @@ class HedgeConfig(BaseSettings):
 
     # Matsu
     matsu_enabled: bool = Field(default=False, alias="MATSU_ENABLED")
-    matsu_api_endpoint: str = Field(default="https://distill.baa.one/api/hedge-data", alias="MATSU_API_ENDPOINT")
+    matsu_api_endpoint: str = Field(default="", alias="MATSU_API_ENDPOINT")
     matsu_auth_token: str = Field(default="", alias="MATSU_AUTH_TOKEN")
     matsu_pool_name: str = Field(default="", alias="MATSU_POOL_NAME")
 

@@ -7,8 +7,8 @@
 
 import logging
 import time
+import traceback
 from datetime import datetime
-from pathlib import Path
 
 # 导入四步核心模块
 from core.prepare import prepare_data
@@ -43,9 +43,9 @@ class HedgeEngine:
         """初始化引擎（配置从环境变量读取）"""
         # 加载配置
         try:
-            self.validated_config = HedgeConfig()
-            self.config = self.validated_config.to_dict()
-            logger.info(self.validated_config.get_summary())
+            config = HedgeConfig()
+            logger.info(config.get_summary())
+            self.config = config.to_dict()
         except ValidationError as e:
             logger.critical(f"Configuration validation failed: {e}")
             raise InvalidConfigError("config", str(e), "Valid configuration required")
@@ -78,24 +78,18 @@ class HedgeEngine:
             return None
 
         try:
-            api_url = matsu_config.get("api_endpoint", "https://distill.baa.one/api/hedge-data")
-            pool_name = matsu_config.get("pool_name", "xLP")
-            timeout = matsu_config.get("timeout", 10)
-
             reporter = MatsuReporter(
-                api_url=api_url,
-                auth_token=auth_token,
-                enabled=True,
-                timeout=timeout,
-                pool_name=pool_name
+                api_url=matsu_config["api_endpoint"],
+                auth_token=matsu_config["auth_token"],
+                pool_name=matsu_config["pool_name"]
             )
-            logger.info(f"✅ Matsu reporter enabled: {pool_name}")
+            logger.info(f"✅ Matsu reporter enabled: {matsu_config['pool_name']}")
             return reporter
         except Exception as e:
             logger.error(f"Failed to initialize Matsu reporter: {e}")
             return None
 
-    async def run_once_pipeline(self):
+    async def run_once(self):
         """
         执行一次完整的对冲检查循环
 
@@ -147,7 +141,6 @@ class HedgeEngine:
 
         except Exception as e:
             logger.error(f"❌ Engine cycle failed: {e}")
-            import traceback
             logger.error(f"Full traceback:\n{traceback.format_exc()}")
 
             # 发送系统错误警报
@@ -157,7 +150,3 @@ class HedgeEngine:
                 logger.error(f"Failed to send alert: {notify_err}")
 
             raise HedgeEngineError(f"Engine cycle failed: {e}")
-
-    async def run_once(self):
-        """执行一次检查循环 - 兼容接口"""
-        return await self.run_once_pipeline()
