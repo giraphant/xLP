@@ -218,8 +218,9 @@ def _decide_symbol_actions(
                     reason=f"Timeout after {elapsed_minutes:.1f} minutes"
                 ))
 
-            # 市价平仓（100%）
-            order_size = _calculate_close_size(offset, 100.0)
+            # 市价平仓（使用配置的平仓比例）
+            close_ratio = config.get("close_ratio", 40.0)
+            order_size = _calculate_close_size(offset, close_ratio)
             side = "sell" if offset > 0 else "buy"
 
             actions.append(TradingAction(
