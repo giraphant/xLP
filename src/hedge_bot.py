@@ -201,6 +201,14 @@ class HedgeBot:
             actual=current_position,
             price=current_price
         )
+
+        # 应用预定义偏移（外部对冲调整）
+        predefined_offset = self.config.get("predefined_offset", {}).get(symbol, 0.0)
+        if predefined_offset != 0.0:
+            raw_offset = offset
+            offset = offset - predefined_offset
+            logger.info(f"{symbol} predefined offset applied: {raw_offset:+.4f} - {predefined_offset:+.4f} = {offset:+.4f}")
+
         offset_usd = abs(offset) * current_price
 
         logger.debug(f"{symbol}: offset={offset:+.4f} (${offset_usd:.2f}), ideal={ideal_hedge:.4f}, actual={current_position:.4f}")
