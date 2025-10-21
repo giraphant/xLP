@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 
 # 导入本地模块
-from exchanges.interface import create_exchange
+from exchanges import create_exchange
 from notifications.apprise_notifier import Notifier
 from core.offset_tracker import calculate_offset_and_cost
 from core.state_manager import StateManager
