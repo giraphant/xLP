@@ -110,68 +110,36 @@ class HedgeBot:
             执行结果摘要
         """
         start_time = datetime.now()
-        logger.info("="*50)
+        step_timings = {}  # 记录每个步骤的耗时
+
+        logger.info("="*70)
         logger.info(f"🚀 HEDGE BOT RUN - {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
-        logger.info("="*50)
+        logger.info("="*70)
 
         try:
             # 步骤1: 获取池子理想对冲
-            logger.info("="*50)
-            logger.info("📊 FETCHING POOL DATA")
-            logger.info("="*50)
-
+            step_start = datetime.now()
             pool_configs = {
                 "jlp": {"amount": self.config.get("jlp_amount", 0)},
                 "alp": {"amount": self.config.get("alp_amount", 0)}
             }
-
-            # 显示配置
-            for pool_type, cfg in pool_configs.items():
-                if cfg["amount"] > 0:
-                    logger.info(f"🏊 {pool_type.upper()} Pool: Amount = {cfg['amount']:,.2f}")
-
             ideal_hedges = await self.pools.fetch_pool_hedges(pool_configs)
-
-            logger.info("📊 IDEAL HEDGES (Negative = Short):")
-            for symbol, hedge in sorted(ideal_hedges.items()):
-                logger.info(f"  💹 {symbol}: {hedge:+.4f}")
-            logger.info(f"✅ Fetched ideal hedges for {len(ideal_hedges)} symbols")
+            step_timings["FetchPoolData"] = (datetime.now() - step_start).total_seconds()
 
             # 步骤2: 获取当前仓位和价格
-            logger.info("="*50)
-            logger.info("💹 FETCHING MARKET DATA")
-            logger.info("="*50)
-
+            step_start = datetime.now()
             positions = await self.exchange.get_positions()
             prices = await exchange_helpers.get_prices(self.exchange, list(ideal_hedges.keys()))
+            step_timings["FetchMarketData"] = (datetime.now() - step_start).total_seconds()
 
-            logger.info("📈 CURRENT PRICES:")
-            for symbol in sorted(prices.keys()):
-                logger.info(f"  💵 {symbol}: ${prices[symbol]:,.2f}")
-
-            logger.info("📊 ACTUAL POSITIONS:")
-            for symbol in sorted(ideal_hedges.keys()):
-                pos = positions.get(symbol, 0.0)
-                # 应用初始偏移
-                initial_offset = self.config.get("initial_offset", {}).get(symbol, 0.0)
-                if initial_offset != 0:
-                    total_pos = pos + initial_offset
-                    logger.info(f"  📍 {symbol}: {total_pos:+.4f} (Exchange: {pos:+.4f}, Initial: {initial_offset:+.4f})")
-                else:
-                    logger.info(f"  📍 {symbol}: {pos:+.4f}")
-
-            logger.info(f"✅ Fetched market data for {len(prices)} symbols")
-
-            # 步骤3: 计算每个symbol的offset和决策
-            logger.info("="*50)
-            logger.info("🤔 DECISION ENGINE - EVALUATING ACTIONS")
-            logger.info("="*50)
-            logger.info(f"⚡ Thresholds: ${self.threshold_min:.2f} - ${self.threshold_max:.2f} (Step: ${self.threshold_step:.2f})")
-
+            # 步骤3: 计算offset和决策
+            step_start = datetime.now()
             decisions = []
+            symbol_details = {}  # 收集每个symbol的详细信息
+
             for symbol, ideal_hedge in ideal_hedges.items():
                 try:
-                    decision = await self._process_symbol(
+                    decision, details = await self._process_symbol(
                         symbol=symbol,
                         ideal_hedge=ideal_hedge,
                         current_position=positions.get(symbol, 0.0),
@@ -179,39 +147,15 @@ class HedgeBot:
                     )
                     if decision:
                         decisions.append(decision)
+                    symbol_details[symbol] = details
                 except Exception as e:
                     logger.error(f"❌ Error processing {symbol}: {e}")
                     await self.on_error(symbol=symbol, error=str(e))
 
-            # 显示决策结果汇总
-            logger.info("📋 DECISIONS:")
-            action_counts = {}
-            for decision in decisions:
-                action = decision.action
-                action_counts[action] = action_counts.get(action, 0) + 1
-
-                symbol = decision.metadata.get("symbol")
-                if action == "place_order":
-                    logger.info(f"  📝 {symbol}: PLACE LIMIT {decision.side.upper()} "
-                               f"{decision.size:.4f} @ ${decision.price:.2f} - {decision.reason}")
-                elif action == "market_order":
-                    logger.info(f"  🚨 {symbol}: PLACE MARKET {decision.side.upper()} "
-                               f"{decision.size:.4f} - {decision.reason}")
-                elif action == "cancel":
-                    logger.info(f"  ❌ {symbol}: CANCEL ORDER - {decision.reason}")
-                elif action == "alert":
-                    logger.info(f"  ⚠️  {symbol}: ALERT - {decision.reason}")
-                else:
-                    logger.debug(f"  ✅ {symbol}: NO ACTION - {decision.reason}")
-
-            logger.info(f"📊 Summary: {action_counts}")
-            logger.info(f"✅ Decided on {len(decisions)} actions")
+            step_timings["ProcessDecisions"] = (datetime.now() - step_start).total_seconds()
 
             # 步骤4: 执行决策
-            logger.info("="*50)
-            logger.info("⚡ EXECUTING ACTIONS")
-            logger.info("="*50)
-
+            step_start = datetime.now()
             results = []
             for decision in decisions:
                 if decision.action != "wait":
@@ -221,48 +165,99 @@ class HedgeBot:
                     except Exception as e:
                         logger.error(f"❌ Error executing {decision}: {e}")
                         await self.on_error(decision=decision, error=str(e))
+            step_timings["ExecuteActions"] = (datetime.now() - step_start).total_seconds()
 
-            # 显示执行结果
-            if results:
-                logger.info("📊 EXECUTION RESULTS:")
-                success_count = sum(1 for r in results if r.get("success"))
-                failed_count = len(results) - success_count
-                for i, result in enumerate(results, 1):
-                    symbol = result.get("symbol")
-                    action = result.get("action")
-                    if result.get("success"):
-                        if "order_id" in result:
-                            logger.info(f"  ✅ [{i}] {symbol}: {action} - Order ID: {result['order_id']}")
-                        else:
-                            logger.info(f"  ✅ [{i}] {symbol}: {action} completed")
-                    else:
-                        logger.error(f"  ❌ [{i}] {symbol}: {action} failed - {result.get('error')}")
+            # 步骤5: 打印详细仓位报告
+            logger.info("="*70)
+            logger.info("📊 DETAILED POSITION REPORT")
+            logger.info("="*70)
+            logger.info("")
 
-                logger.info(f"📈 EXECUTION STATISTICS:")
-                logger.info(f"  • Total Actions: {len(results)}")
-                logger.info(f"  • Successful: {success_count}")
-                logger.info(f"  • Failed: {failed_count}")
-            else:
-                logger.info("✅ No actions to execute")
+            total_exposure_usd = 0.0
+            total_pnl = 0.0
 
-            # 步骤5: 生成摘要报告
+            for symbol in sorted(symbol_details.keys()):
+                details = symbol_details[symbol]
+                offset = details["offset"]
+                offset_usd = details["offset_usd"]
+                current_price = details["current_price"]
+                cost_basis = details["cost_basis"]
+                unrealized_pnl = details["unrealized_pnl"]
+                pnl_pct = details["pnl_pct"]
+                decision = details["decision"]
+                reason = details["reason"]
+                monitoring = details["monitoring"]
+
+                total_exposure_usd += offset_usd
+                total_pnl += unrealized_pnl
+
+                logger.info(f"【{symbol}】")
+                if offset > 0:
+                    logger.info(f"  状态: 🔴 LONG 需要卖出平仓")
+                elif offset < 0:
+                    logger.info(f"  状态: 🟢 SHORT 需要买入平仓")
+                else:
+                    logger.info(f"  状态: ⚖️  BALANCED")
+
+                logger.info(f"  偏移: {offset:+.6f} {symbol} (${offset_usd:.2f})")
+                logger.info(f"  当前价格: ${current_price:.2f}")
+                logger.info(f"  平均成本: ${cost_basis:.2f}")
+
+                if unrealized_pnl != 0:
+                    pnl_emoji = "💚" if unrealized_pnl > 0 else "❤️ "
+                    logger.info(f"  浮动盈亏: {pnl_emoji} ${unrealized_pnl:+.2f} ({pnl_pct:+.2f}%)")
+
+                if monitoring:
+                    elapsed = (datetime.now() - monitoring["started_at"]).total_seconds() / 60
+                    logger.info(f"  📍 监控中: Zone {monitoring['zone']} | 订单 {monitoring['order_id']} | {elapsed:.1f}分钟")
+
+                if decision == "wait":
+                    logger.info(f"  决策: ⏸️  无操作")
+                elif decision == "place_order":
+                    logger.info(f"  决策: 📝 挂单")
+                elif decision == "market_order":
+                    logger.info(f"  决策: 🚨 市价单")
+                elif decision == "cancel":
+                    logger.info(f"  决策: ❌ 撤单")
+                elif decision == "alert":
+                    logger.info(f"  决策: ⚠️  警报")
+
+                logger.info(f"  原因: {reason}")
+                logger.info("")
+
+            logger.info(f"📊 总计:")
+            logger.info(f"  总敞口: ${total_exposure_usd:.2f}")
+            pnl_emoji = "💚" if total_pnl >= 0 else "❤️ "
+            logger.info(f"  总盈亏: {pnl_emoji} ${total_pnl:+.2f}")
+            logger.info("="*70)
+
+            # 步骤6: Pipeline执行总结
             duration = (datetime.now() - start_time).total_seconds()
-
-            # 统计结果
             success_count = sum(1 for r in results if r.get("success"))
             failed_count = len(results) - success_count
 
-            # 按类型统计
-            action_stats = {}
-            for r in results:
-                action_type = r.get("action", "unknown")
-                if action_type not in action_stats:
-                    action_stats[action_type] = {"success": 0, "failed": 0}
+            logger.info("="*70)
+            logger.info("📊 PIPELINE EXECUTION SUMMARY")
+            logger.info("="*70)
+            logger.info("📈 Step Results:")
+            for step_name, step_time in step_timings.items():
+                logger.info(f"  ✅ {step_name}: success ({step_time:.2f}s)")
 
-                if r.get("success"):
-                    action_stats[action_type]["success"] += 1
-                else:
-                    action_stats[action_type]["failed"] += 1
+            logger.info("💰 Position Summary:")
+            for symbol, details in symbol_details.items():
+                offset = details["offset"]
+                offset_usd = details["offset_usd"]
+                status_emoji = "🔴" if offset > 0 else "🟢" if offset < 0 else "⚖️ "
+                status_text = "LONG" if offset > 0 else "SHORT" if offset < 0 else "BALANCED"
+                logger.info(f"  • {symbol}: {status_emoji} {status_text} ${offset_usd:.2f} (Offset: {offset:+.4f})")
+
+            logger.info(f"  📊 Total Exposure: ${total_exposure_usd:.2f}")
+
+            logger.info(f"⚡ Actions Executed: {success_count}/{len(results)} successful")
+            logger.info(f"⏱️  Total Time: {len(step_timings)} steps completed in {duration:.2f}s")
+            logger.info("="*70)
+            logger.info(f"✅ PIPELINE COMPLETED - Duration: {duration:.2f}s")
+            logger.info("="*70)
 
             summary = {
                 "timestamp": start_time.isoformat(),
@@ -272,26 +267,12 @@ class HedgeBot:
                 "actions_executed": len(results),
                 "actions_succeeded": success_count,
                 "actions_failed": failed_count,
-                "action_stats": action_stats,
+                "total_exposure_usd": total_exposure_usd,
+                "total_pnl": total_pnl,
                 "results": results
             }
 
-            # 清晰的总结日志
-            logger.info("="*50)
-            logger.info("📋 RUN SUMMARY")
-            logger.info("="*50)
-            logger.info(f"⏱️  Duration: {duration:.2f}s")
-            logger.info(f"📊 Symbols Processed: {len(ideal_hedges)}")
-            logger.info(f"🎯 Decisions Made: {len(decisions)}")
-            logger.info(f"⚡ Actions Executed: {len(results)} ({success_count} succeeded, {failed_count} failed)")
-
-            if action_stats:
-                logger.info("📈 Action Breakdown:")
-                for action_type, stats in action_stats.items():
-                    logger.info(f"   • {action_type}: {stats['success']} ✅ / {stats['failed']} ❌")
-
             await self.on_report(summary=summary)
-
             return summary
 
         except Exception as e:
@@ -305,7 +286,7 @@ class HedgeBot:
         ideal_hedge: float,
         current_position: float,
         current_price: float
-    ) -> Optional[Decision]:
+    ) -> tuple[Optional[Decision], Dict[str, Any]]:
         """
         处理单个symbol的决策逻辑
 
@@ -337,81 +318,85 @@ class HedgeBot:
 
         offset_usd = abs(offset) * current_price
 
-        # 详细日志
-        logger.info(f"📊 {symbol}:")
-        logger.info(f"  ├─ Ideal Position: {ideal_hedge:+.4f}")
-        logger.info(f"  ├─ Actual Position: {adjusted_position:+.4f}")
-        if predefined_offset != 0.0:
-            logger.info(f"  ├─ Raw Offset: {raw_offset:+.4f} ({abs(raw_offset) * current_price:.2f} USD)")
-            logger.info(f"  ├─ Predefined Adjustment: {predefined_offset:+.4f}")
-        logger.info(f"  ├─ Final Offset: {offset:+.4f} ({offset_usd:.2f} USD)")
-        logger.info(f"  ├─ Cost Basis: ${cost_basis:.2f}")
-
-        # 显示偏移方向
-        if offset > 0:
-            logger.info(f"  └─ Status: 🔴 LONG exposure (Need to SELL {abs(offset):.4f})")
-        elif offset < 0:
-            logger.info(f"  └─ Status: 🟢 SHORT exposure (Need to BUY {abs(offset):.4f})")
+        # 计算浮动盈亏
+        if cost_basis > 0 and offset != 0:
+            unrealized_pnl = -offset * (current_price - cost_basis)  # 负号因为offset是需要平仓的量
+            pnl_pct = (unrealized_pnl / (abs(offset) * cost_basis)) * 100
         else:
-            logger.info(f"  └─ Status: ✅ BALANCED")
+            unrealized_pnl = 0.0
+            pnl_pct = 0.0
 
-        # 决策1: 检查阈值
-        decision = decide_on_threshold_breach(offset_usd, self.threshold_max)
-        if decision.action == "alert":
-            # 添加symbol和offset信息到metadata
-            decision.metadata = decision.metadata or {}
-            decision.metadata["symbol"] = symbol
-            decision.metadata["offset"] = offset
-            decision.metadata["offset_usd"] = offset_usd
-            await self.on_decision(symbol=symbol, decision=decision)
-            return decision
-
-        # 获取symbol状态（同步操作，无需 await）
+        # 获取symbol状态
         state = self.state.get_symbol_state(symbol)
         monitoring = state.monitoring
         started_at = monitoring.started_at
         last_fill_time = state.last_fill_time
 
+        # 决策1: 检查阈值
+        decision = decide_on_threshold_breach(offset_usd, self.threshold_max)
+        if decision.action == "alert":
+            decision.metadata = decision.metadata or {}
+            decision.metadata["symbol"] = symbol
+            decision.metadata["offset"] = offset
+            decision.metadata["offset_usd"] = offset_usd
+            await self.on_decision(symbol=symbol, decision=decision)
+
         # 决策2: 检查超时
-        if started_at:
-            decision = decide_on_timeout(started_at, self.timeout_minutes, offset, self.close_ratio)
-            if decision:
-                # 添加symbol和offset信息到metadata
+        if decision.action == "wait" and started_at:
+            timeout_decision = decide_on_timeout(started_at, self.timeout_minutes, offset, self.close_ratio)
+            if timeout_decision:
+                decision = timeout_decision
                 decision.metadata = decision.metadata or {}
                 decision.metadata["symbol"] = symbol
                 decision.metadata["offset"] = offset
                 decision.metadata["offset_usd"] = offset_usd
                 await self.on_decision(symbol=symbol, decision=decision)
-                return decision
 
         # 决策3: 检查zone变化
-        old_zone = monitoring.current_zone
-        new_zone = calculate_zone(offset_usd, self.threshold_min, self.threshold_max, self.threshold_step)
+        if decision.action == "wait":
+            old_zone = monitoring.current_zone
+            new_zone = calculate_zone(offset_usd, self.threshold_min, self.threshold_max, self.threshold_step)
 
-        # 检查cooldown
-        in_cooldown = False
-        if last_fill_time:
-            in_cooldown = check_cooldown(last_fill_time, self.cooldown_minutes)
+            in_cooldown = False
+            if last_fill_time:
+                in_cooldown = check_cooldown(last_fill_time, self.cooldown_minutes)
 
-        decision = decide_on_zone_change(
-            old_zone=old_zone,
-            new_zone=new_zone,
-            in_cooldown=in_cooldown,
-            offset=offset,
-            cost_basis=cost_basis,
-            close_ratio=self.close_ratio,
-            price_offset_pct=self.price_offset_pct
-        )
+            decision = decide_on_zone_change(
+                old_zone=old_zone,
+                new_zone=new_zone,
+                in_cooldown=in_cooldown,
+                offset=offset,
+                cost_basis=cost_basis,
+                close_ratio=self.close_ratio,
+                price_offset_pct=self.price_offset_pct
+            )
 
-        # 附加symbol和metadata
-        decision.metadata = decision.metadata or {}
-        decision.metadata["symbol"] = symbol
-        decision.metadata["offset"] = offset
-        decision.metadata["offset_usd"] = offset_usd
-        decision.metadata["zone"] = new_zone
+            decision.metadata = decision.metadata or {}
+            decision.metadata["symbol"] = symbol
+            decision.metadata["offset"] = offset
+            decision.metadata["offset_usd"] = offset_usd
+            decision.metadata["zone"] = new_zone
+            await self.on_decision(symbol=symbol, decision=decision)
 
-        await self.on_decision(symbol=symbol, decision=decision)
-        return decision
+        # 收集详细信息
+        details = {
+            "symbol": symbol,
+            "offset": offset,
+            "offset_usd": offset_usd,
+            "current_price": current_price,
+            "cost_basis": cost_basis,
+            "unrealized_pnl": unrealized_pnl,
+            "pnl_pct": pnl_pct,
+            "decision": decision.action,
+            "reason": decision.reason,
+            "monitoring": {
+                "zone": monitoring.current_zone,
+                "order_id": monitoring.order_id,
+                "started_at": started_at
+            } if started_at else None
+        }
+
+        return decision, details
 
     async def _execute_decision(self, decision: Decision) -> Dict[str, Any]:
         """
@@ -425,8 +410,6 @@ class HedgeBot:
         """
         symbol = decision.metadata.get("symbol")
         action = decision.action
-
-        logger.info(f"⚡ Executing {action} for {symbol}: {decision.reason}")
 
         result = {
             "symbol": symbol,
