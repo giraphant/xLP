@@ -84,7 +84,7 @@ def hedge_bot(config, mock_exchange, mock_state, mock_pools, mock_plugin):
     """创建HedgeBot实例"""
     return HedgeBot(
         config=config,
-        exchange_client=mock_exchange,
+        exchange=mock_exchange,  # 直接传递 exchange，无包装
         state_store=mock_state,
         pool_fetcher=mock_pools,
         on_decision=mock_plugin.on_decision,
@@ -163,10 +163,10 @@ class TestHedgeBotBasicFlow:
         assert order["side"] == "sell"  # offset > 0 → sell
         assert order["type"] == "limit"
 
-        # 验证状态已更新
-        state = await mock_state.get_symbol_state("SOL")
-        assert state["monitoring"]["active"] is True
-        assert state["monitoring"]["order_id"] == order_id
+        # 验证状态已更新（同步操作，无需 await）
+        state = mock_state.get_symbol_state("SOL")
+        assert state.monitoring.active is True
+        assert state.monitoring.order_id == order_id
 
 
 class TestHedgeBotZoneLogic:
@@ -240,14 +240,18 @@ class TestHedgeBotTimeout:
         """场景：订单超时 → 市价平仓"""
         # 设置一个已经monitoring的状态（超过20分钟）
         old_time = datetime.now() - timedelta(minutes=21)
-        await mock_state.update_symbol_state("SOL", {
-            "monitoring": {
-                "active": True,
-                "order_id": "OLD-ORDER",
-                "current_zone": 2,
-                "started_at": old_time.isoformat()
-            }
-        })
+        # 使用新的 API：直接设置状态
+        from core.state import SymbolState, MonitoringState
+        from dataclasses import replace
+
+        old_monitoring = MonitoringState(
+            active=True,
+            order_id="OLD-ORDER",
+            current_zone=2,
+            started_at=old_time
+        )
+        old_state = SymbolState(monitoring=old_monitoring)
+        mock_state._store.set_symbol_state("SOL", old_state)
 
         # 设置仓位（有offset）
         # ideal=-0.10, actual=0, offset=0.10, offset_usd=$10
@@ -285,13 +289,14 @@ class TestHedgeBotCooldown:
         """场景：冷却期内，zone恶化 → 重新下单"""
         # 设置最近成交（2分钟前，在5分钟冷却期内）
         recent_fill = datetime.now() - timedelta(minutes=2)
-        await mock_state.update_symbol_state("SOL", {
-            "last_fill_time": recent_fill.isoformat(),
-            "monitoring": {
-                "active": False,
-                "current_zone": 2  # 旧zone
-            }
-        })
+        # 使用新的 API
+        from core.state import SymbolState, MonitoringState
+
+        cooldown_state = SymbolState(
+            last_fill_time=recent_fill,
+            monitoring=MonitoringState(active=False, current_zone=2)
+        )
+        mock_state._store.set_symbol_state("SOL", cooldown_state)
 
         # 设置新的offset（zone恶化）
         # ideal=-0.10, actual=0.05, offset=0.15, offset_usd=$15
@@ -377,7 +382,7 @@ class TestHedgeBotPlugins:
 
         bot = HedgeBot(
             config=config,
-            exchange_client=mock_exchange,
+            exchange=mock_exchange,
             state_store=mock_state,
             pool_fetcher=mock_pools,
             on_decision=failing_callback,  # 会失败的回调
@@ -416,7 +421,7 @@ class TestHedgeBotEdgeCases:
 
         bot = HedgeBot(
             config=config,
-            exchange_client=mock_exchange,
+            exchange=mock_exchange,
             state_store=mock_state,
             pool_fetcher=empty_pools,
             on_report=mock_plugin.on_report

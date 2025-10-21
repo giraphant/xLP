@@ -18,7 +18,6 @@ import sys
 from utils.config import HedgeConfig
 
 # Adapters
-from adapters.exchange_client import ExchangeClient
 from adapters.state_store import StateStore
 from adapters.pool_fetcher import PoolFetcher
 
@@ -49,8 +48,8 @@ async def main():
     config_dict = config.to_dict()
 
     # 初始化适配器（极简版，无不需要的组件）
-    exchange_impl = create_exchange(config_dict["exchange"])
-    exchange_client = ExchangeClient(exchange_impl=exchange_impl)
+    # 直接创建 exchange，不要 ExchangeClient 包装！
+    exchange = create_exchange(config_dict["exchange"])
 
     state_store = StateStore()
 
@@ -68,22 +67,35 @@ async def main():
 
     metrics = MetricsCollector()
 
+    # 包装同步回调为async（避免 HedgeBot 中 await 报错）
+    async def on_decision_async(**kw):
+        """包装同步回调"""
+        audit_log.log_decision(**kw)
+
+    async def on_action_async(**kw):
+        """包装同步回调（并行调用）"""
+        audit_log.log_action(**kw)
+        metrics.record_action(**kw)
+
+    async def on_error_async(**kw):
+        """包装同步回调（并行调用）"""
+        audit_log.log_error(**kw)
+        metrics.record_error(**kw)
+
+    async def on_report_async(summary):
+        """包装同步回调"""
+        logger.info(f"📊 Summary: {summary}")
+
     # 组装HedgeBot
     bot = HedgeBot(
         config=config_dict,
-        exchange_client=exchange_client,
+        exchange=exchange,  # 直接传递 exchange，无包装！
         state_store=state_store,
         pool_fetcher=pool_fetcher,
-        on_decision=audit_log.log_decision,
-        on_action=lambda **kw: asyncio.gather(
-            audit_log.log_action(**kw),
-            metrics.record_action(**kw)
-        ),
-        on_error=lambda **kw: asyncio.gather(
-            audit_log.log_error(**kw),
-            metrics.record_error(**kw)
-        ),
-        on_report=lambda summary: logger.info(f"📊 Summary: {summary}")
+        on_decision=on_decision_async,
+        on_action=on_action_async,
+        on_error=on_error_async,
+        on_report=on_report_async
     )
 
     # 运行对冲循环
@@ -97,9 +109,9 @@ async def main():
                 summary = await bot.run_once()
                 logger.info(f"✅ Run complete: {summary['actions_executed']} actions")
 
-                # 显示指标
+                # 显示指标（同步调用，无需 await）
                 if summary['actions_executed'] > 0:
-                    metrics_summary = await metrics.get_summary()
+                    metrics_summary = metrics.get_summary()
                     logger.info(f"📈 Total actions: {metrics_summary['metrics'].get('actions_total', 0)}")
 
             except Exception as e:

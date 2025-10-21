@@ -73,17 +73,16 @@ async def generate_position_report(context: PipelineContext, state_manager=None)
         # 监控状态（如果有 state_manager）
         if state_manager:
             try:
-                symbol_state = await state_manager.get_symbol_state(symbol)
-                monitoring = symbol_state.get("monitoring", {})
+                symbol_state = state_manager.get_symbol_state(symbol)
+                monitoring = symbol_state.monitoring
 
-                if monitoring.get("active"):
-                    zone = monitoring.get("current_zone", "N/A")
-                    order_id = monitoring.get("order_id", "N/A")
-                    started_at = monitoring.get("started_at")
+                if monitoring.active:
+                    zone = monitoring.current_zone or "N/A"
+                    order_id = monitoring.order_id or "N/A"
+                    started_at = monitoring.started_at
 
                     if started_at:
-                        start_time = datetime.fromisoformat(started_at)
-                        elapsed_min = (datetime.now() - start_time).total_seconds() / 60
+                        elapsed_min = (datetime.now() - started_at).total_seconds() / 60
                         logger.info(f"  📍 监控中: Zone {zone} | 订单 {order_id} | {elapsed_min:.1f}分钟")
                     else:
                         logger.info(f"  📍 监控中: Zone {zone} | 订单 {order_id}")

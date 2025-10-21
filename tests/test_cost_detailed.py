@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """
-详细的成本追踪测试案例
-手动验证每个计算步骤
+详细的成本追踪测试案例（简化版）
+
+注意：新架构已简化成本追踪逻辑
+- cost_basis 直接等于当前价格（不再使用加权平均）
+- 这些测试主要验证 offset 计算正确性
 """
 
 import sys
@@ -9,6 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
 from core.offset_tracker import calculate_offset_and_cost
+import pytest
 
 
 def verify_calculation(old_offset, old_cost, new_offset, delta_offset, price, expected_cost):
@@ -30,50 +34,29 @@ def verify_calculation(old_offset, old_cost, new_offset, delta_offset, price, ex
     return calculated
 
 
+@pytest.mark.skip(reason="Simplified cost tracking - complex weighted average logic removed (YAGNI)")
 def test_case_1():
-    """案例1: 多头敞口从无到有，逐步扩大，然后缩小"""
-    print("="*80)
-    print("案例1: 多头敞口（少空）从建立到平仓")
-    print("="*80)
-    print()
+    """案例1: 多头敞口从无到有，逐步扩大，然后缩小（跳过）"""
+    pass
 
+
+def test_case_1_simplified():
+    """案例1简化版: 验证基本的offset计算"""
     scenarios = [
-        # (ideal, actual, price, description)
-        (-100, -50, 200, "初始：理想空100，实际空50 → 少空50"),
-        (-100, -50, 210, "价格涨到210，持仓不变 → 成本不变"),
-        (-110, -50, 220, "理想变110，实际不变 → 少空60（新增10个敞口）"),
-        (-110, -70, 215, "做空20个 → 少空40（平掉20个敞口）"),
-        (-110, -90, 205, "再做空20个 → 少空20（再平20个）"),
-        (-110, -110, 200, "完全平仓 → 偏移归零"),
+        # (ideal, actual, price, expected_offset)
+        (-100, -50, 200, 50),  # 少空50
+        (-110, -50, 220, 60),  # 少空60
+        (-110, -70, 215, 40),  # 少空40
+        (-110, -110, 200, 0),  # 平衡
     ]
 
-    old_offset = 0.0
-    old_cost = 0.0
-
-    for i, (ideal, actual, price, desc) in enumerate(scenarios, 1):
-        print(f"\n轮{i}: {desc}")
-        print(f"  理想持仓: {ideal}, 实际持仓: {actual}, 价格: ${price}")
-
-        offset, cost = calculate_offset_and_cost(ideal, actual, price, old_offset, old_cost)
-        delta = offset - old_offset
-
-        print(f"  偏移: {old_offset:.1f} → {offset:.1f} (delta: {delta:+.1f})")
-        print(f"  成本: ${old_cost:.2f} → ${cost:.2f}")
-
-        # 手动验证
-        if i == 1:
-            print(f"  首次建仓，成本 = 当前价 = {price}")
-        elif abs(offset) < 1e-8:
-            print(f"  偏移归零，成本 = 0")
-        elif abs(delta) < 1e-8:
-            print(f"  偏移不变，成本不变 = {old_cost}")
-        else:
-            verify_calculation(old_offset, old_cost, offset, delta, price, cost)
-
-        old_offset = offset
-        old_cost = cost
+    for ideal, actual, price, expected_offset in scenarios:
+        offset, cost = calculate_offset_and_cost(ideal, actual, price)
+        assert offset == expected_offset
+        assert cost == price  # 简化版本：cost = price
 
 
+@pytest.mark.skip(reason="Simplified cost tracking")
 def test_case_2():
     """案例2: 空头敞口（多空了）"""
     print("\n\n")
@@ -117,6 +100,7 @@ def test_case_2():
         old_cost = cost
 
 
+@pytest.mark.skip(reason="Simplified cost tracking")
 def test_case_3():
     """案例3: 你提出的极端案例"""
     print("\n\n")
@@ -160,6 +144,7 @@ def test_case_3():
     print("    - 总损失 = 5,000（正好是100个敞口从100跌到50的损失）✓")
 
 
+@pytest.mark.skip(reason="Simplified cost tracking")
 def test_case_4():
     """案例4: 多空反转"""
     print("\n\n")

@@ -36,9 +36,11 @@ from core.decision_logic import (
 from core.offset_tracker import calculate_offset_and_cost
 
 # Adapters
-from adapters.exchange_client import ExchangeClient
 from adapters.state_store import StateStore
 from adapters.pool_fetcher import PoolFetcher
+
+# Exchange helpers (替代 ExchangeClient)
+from utils import exchange_helpers
 
 logger = logging.getLogger(__name__)
 
@@ -55,8 +57,8 @@ class HedgeBot:
         self,
         # 核心配置
         config: dict,
-        # Adapters
-        exchange_client: ExchangeClient,
+        # 核心组件（无间接层！）
+        exchange,  # 直接使用 exchange，不要 ExchangeClient 包装
         state_store: StateStore,
         pool_fetcher: PoolFetcher,
         # 可选插件（通过回调注入）
@@ -70,7 +72,7 @@ class HedgeBot:
 
         Args:
             config: 配置字典
-            exchange_client: 交易所适配器
+            exchange: 交易所实例（直接使用，无包装）
             state_store: 状态存储
             pool_fetcher: 池子数据获取器
             on_decision: 决策回调（用于audit log）
@@ -79,7 +81,7 @@ class HedgeBot:
             on_report: 报告回调（用于监控）
         """
         self.config = config
-        self.exchange = exchange_client
+        self.exchange = exchange  # 直接使用 exchange！
         self.state = state_store
         self.pools = pool_fetcher
 
@@ -123,7 +125,7 @@ class HedgeBot:
 
             # 步骤2: 获取当前仓位和价格
             positions = await self.exchange.get_positions()
-            prices = await self.exchange.get_prices(list(ideal_hedges.keys()))
+            prices = await exchange_helpers.get_prices(self.exchange, list(ideal_hedges.keys()))
             logger.info(f"💼 Current positions: {len(positions)} symbols")
 
             # 步骤3: 计算每个symbol的offset和决策
@@ -214,16 +216,15 @@ class HedgeBot:
             await self.on_decision(symbol=symbol, decision=decision)
             return decision
 
-        # 获取symbol状态
-        state = await self.state.get_symbol_state(symbol)
-        monitoring = state.get("monitoring", {})
-        started_at = monitoring.get("started_at")
-        last_fill_time = state.get("last_fill_time")
+        # 获取symbol状态（同步操作，无需 await）
+        state = self.state.get_symbol_state(symbol)
+        monitoring = state.monitoring
+        started_at = monitoring.started_at
+        last_fill_time = state.last_fill_time
 
         # 决策2: 检查超时
         if started_at:
-            started_dt = datetime.fromisoformat(started_at) if isinstance(started_at, str) else started_at
-            decision = decide_on_timeout(started_dt, self.timeout_minutes, offset, self.close_ratio)
+            decision = decide_on_timeout(started_at, self.timeout_minutes, offset, self.close_ratio)
             if decision:
                 # 添加symbol和offset信息到metadata
                 decision.metadata = decision.metadata or {}
@@ -234,14 +235,13 @@ class HedgeBot:
                 return decision
 
         # 决策3: 检查zone变化
-        old_zone = monitoring.get("current_zone")
+        old_zone = monitoring.current_zone
         new_zone = calculate_zone(offset_usd, self.threshold_min, self.threshold_max, self.threshold_step)
 
         # 检查cooldown
         in_cooldown = False
         if last_fill_time:
-            last_fill_dt = datetime.fromisoformat(last_fill_time) if isinstance(last_fill_time, str) else last_fill_time
-            in_cooldown = check_cooldown(last_fill_dt, self.cooldown_minutes)
+            in_cooldown = check_cooldown(last_fill_time, self.cooldown_minutes)
 
         decision = decide_on_zone_change(
             old_zone=old_zone,
@@ -287,8 +287,9 @@ class HedgeBot:
 
         try:
             if action == "place_order":
-                # 挂限价单
-                order_id = await self.exchange.place_order(
+                # 挂限价单（带确认）
+                order_id = await exchange_helpers.place_limit_order_confirmed(
+                    self.exchange,
                     symbol=symbol,
                     side=decision.side,
                     size=decision.size,
@@ -297,19 +298,14 @@ class HedgeBot:
                 result["order_id"] = order_id
                 result["success"] = True
 
-                # 更新状态
-                await self.state.update_symbol_state(symbol, {
-                    "monitoring": {
-                        "active": True,
-                        "order_id": order_id,
-                        "current_zone": decision.metadata.get("zone"),
-                        "started_at": datetime.now().isoformat()
-                    }
-                })
+                # 更新状态（同步操作）
+                zone = decision.metadata.get("zone")
+                self.state.start_monitoring(symbol, order_id, zone)
 
             elif action == "market_order":
                 # 市价单
-                order_id = await self.exchange.place_market_order(
+                order_id = await exchange_helpers.place_market_order(
+                    self.exchange,
                     symbol=symbol,
                     side=decision.side,
                     size=decision.size
@@ -317,23 +313,19 @@ class HedgeBot:
                 result["order_id"] = order_id
                 result["success"] = True
 
-                # 更新状态（清除monitoring）
-                await self.state.update_symbol_state(symbol, {
-                    "monitoring": {"active": False},
-                    "last_fill_time": datetime.now().isoformat()
-                })
+                # 更新状态（清除monitoring，记录成交时间）
+                self.state.stop_monitoring(symbol, with_fill=True)
 
             elif action == "cancel":
                 # 撤单
-                existing_order_id = (await self.state.get_symbol_state(symbol)).get("monitoring", {}).get("order_id")
+                state = self.state.get_symbol_state(symbol)
+                existing_order_id = state.monitoring.order_id
                 if existing_order_id:
-                    await self.exchange.cancel_order(symbol, existing_order_id)
+                    await exchange_helpers.cancel_order(self.exchange, symbol, existing_order_id)
                     result["success"] = True
 
-                    # 更新状态
-                    await self.state.update_symbol_state(symbol, {
-                        "monitoring": {"active": False}
-                    })
+                    # 更新状态（停止监控）
+                    self.state.stop_monitoring(symbol, with_fill=False)
 
             await self.on_action(symbol=symbol, action=action, result=result)
 

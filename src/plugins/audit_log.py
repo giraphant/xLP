@@ -9,12 +9,12 @@
 
 特点：
 - 通过回调注入到HedgeBot
-- 异步安全
+- 线程安全（同步操作，去掉 async 开销）
 - 结构化日志
 """
 
 import json
-import asyncio
+import threading
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -25,9 +25,9 @@ logger = logging.getLogger(__name__)
 
 class AuditLog:
     """
-    审计日志 - ~60行
+    审计日志 - Linus 风格重构
 
-    替代原来散落在各处的日志逻辑
+    去掉不必要的 async（文件写入已经是同步的！）
     """
 
     def __init__(
@@ -44,15 +44,15 @@ class AuditLog:
         """
         self.enabled = enabled
         self.log_file = Path(log_file) if log_file else None
-        self.lock = asyncio.Lock()
+        self.lock = threading.Lock()  # 同步锁
 
         if self.log_file:
             self.log_file.parent.mkdir(parents=True, exist_ok=True)
             logger.info(f"Audit log enabled: {self.log_file}")
 
-    async def log_decision(self, symbol: str, decision: Any, **kwargs):
+    def log_decision(self, symbol: str, decision: Any, **kwargs):
         """
-        记录决策
+        记录决策（同步操作）
 
         Args:
             symbol: 币种符号
@@ -72,11 +72,11 @@ class AuditLog:
             **kwargs
         }
 
-        await self._write_entry(entry)
+        self._write_entry(entry)
 
-    async def log_action(self, symbol: str, action: str, result: dict, **kwargs):
+    def log_action(self, symbol: str, action: str, result: dict, **kwargs):
         """
-        记录操作
+        记录操作（同步操作）
 
         Args:
             symbol: 币种符号
@@ -97,11 +97,11 @@ class AuditLog:
             **kwargs
         }
 
-        await self._write_entry(entry)
+        self._write_entry(entry)
 
-    async def log_error(self, error: str, **kwargs):
+    def log_error(self, error: str, **kwargs):
         """
-        记录错误
+        记录错误（同步操作）
 
         Args:
             error: 错误信息
@@ -117,11 +117,11 @@ class AuditLog:
             **kwargs
         }
 
-        await self._write_entry(entry)
+        self._write_entry(entry)
 
-    async def _write_entry(self, entry: dict):
-        """写入日志条目"""
-        async with self.lock:
+    def _write_entry(self, entry: dict):
+        """写入日志条目（同步操作）"""
+        with self.lock:
             # 写入logger
             logger.info(f"[AUDIT] {entry['type']}: {json.dumps(entry, ensure_ascii=False)}")
 

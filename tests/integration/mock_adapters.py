@@ -22,11 +22,19 @@ class MockExchangeClient:
         """获取当前仓位"""
         return self.positions.copy()
 
+    async def get_position(self, symbol: str) -> float:
+        """获取单个币种的仓位"""
+        return self.positions.get(symbol, 0.0)
+
     async def get_prices(self, symbols: List[str]) -> Dict[str, float]:
         """获取价格"""
         return {symbol: self.prices.get(symbol, 100.0) for symbol in symbols}
 
-    async def place_order(
+    async def get_price(self, symbol: str) -> float:
+        """获取单个币种的价格"""
+        return self.prices.get(symbol, 100.0)
+
+    async def place_limit_order(
         self,
         symbol: str,
         side: str,
@@ -47,6 +55,11 @@ class MockExchangeClient:
         }
 
         return order_id
+
+    # 别名：兼容旧测试
+    async def place_order(self, symbol: str, side: str, size: float, price: float) -> str:
+        """下限价单（别名）"""
+        return await self.place_limit_order(symbol, side, size, price)
 
     async def place_market_order(
         self,
@@ -79,7 +92,7 @@ class MockExchangeClient:
         if order_id in self.orders:
             self.orders[order_id]["status"] = "cancelled"
 
-    async def get_order_status(self, order_id: str) -> str:
+    async def get_order_status(self, symbol: str, order_id: str) -> str:
         """获取订单状态"""
         if order_id in self.orders:
             return self.orders[order_id]["status"]
@@ -111,43 +124,40 @@ class MockExchangeClient:
 
 
 class MockStateStore:
-    """模拟状态存储"""
+    """
+    模拟状态存储 - 匹配新的同步 API
+
+    注意：使用真实的 StateStore 即可，这里只是简化版本
+    """
 
     def __init__(self):
-        self.data = {}
+        # 直接使用真实的 StateStore
+        from adapters.state_store import StateStore
+        self._store = StateStore()
 
-    async def get(self, key: str, default=None):
-        """获取数据"""
-        return self.data.get(key, default)
+    def get_symbol_state(self, symbol: str):
+        """获取symbol状态（同步）"""
+        return self._store.get_symbol_state(symbol)
 
-    async def set(self, key: str, value):
-        """设置数据"""
-        self.data[key] = value
+    def update_symbol_state(self, symbol: str, updater):
+        """更新symbol状态（同步）"""
+        return self._store.update_symbol_state(symbol, updater)
 
-    async def update(self, key: str, partial: dict):
-        """更新数据（deep merge）"""
-        current = self.data.get(key, {})
-        merged = self._deep_merge(current, partial)
-        self.data[key] = merged
+    def start_monitoring(self, symbol: str, order_id: str, zone: int):
+        """快捷方法：开始监控"""
+        return self._store.start_monitoring(symbol, order_id, zone)
 
-    async def get_symbol_state(self, symbol: str) -> dict:
-        """获取symbol状态"""
-        return self.data.get(f"symbol:{symbol}", {})
+    def stop_monitoring(self, symbol: str, with_fill: bool = False):
+        """快捷方法：停止监控"""
+        return self._store.stop_monitoring(symbol, with_fill)
 
-    async def update_symbol_state(self, symbol: str, partial: dict):
-        """更新symbol状态"""
-        key = f"symbol:{symbol}"
-        await self.update(key, partial)
+    def clear(self):
+        """清空状态"""
+        return self._store.clear()
 
-    def _deep_merge(self, base: dict, update: dict) -> dict:
-        """深度合并"""
-        result = base.copy()
-        for key, value in update.items():
-            if key in result and isinstance(result[key], dict) and isinstance(value, dict):
-                result[key] = self._deep_merge(result[key], value)
-            else:
-                result[key] = value
-        return result
+    def get_all_states(self):
+        """获取所有状态"""
+        return self._store.get_all_states()
 
 
 class MockPoolFetcher:
