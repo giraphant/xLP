@@ -60,8 +60,8 @@ class Notifier:
     def _load_services(self):
         """加载所有启用的通知服务"""
 
-        # Pushover
-        pushover_config = self.config.get("pushover", {})
+        # Pushover（config 直接就是 pushover 配置）
+        pushover_config = self.config
         if pushover_config.get("enabled", False):
             user_key = pushover_config.get("user_key", "")
             api_token = pushover_config.get("api_token", "")
