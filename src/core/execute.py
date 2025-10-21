@@ -222,14 +222,20 @@ async def _execute_alert(
     notifier
 ):
     """
-    发送警报
+    发送警报（根据 alert_type 调用对应方法）
     """
     logger.warning(f"🚨 ALERT: {action.symbol} - {action.reason}")
 
-    # 调用对应的 alert 方法
-    await notifier.alert_threshold_exceeded(
-        action.symbol,
-        action.metadata["offset_usd"],
-        action.metadata["offset"],
-        action.metadata["current_price"]
-    )
+    alert_type = action.metadata.get("alert_type", "warning")
+
+    # 根据 alert_type 调用对应的通知方法
+    if alert_type == "threshold_exceeded":
+        await notifier.alert_threshold_exceeded(
+            action.symbol,
+            action.metadata["offset_usd"],
+            action.metadata["offset"],
+            action.metadata["current_price"]
+        )
+    else:
+        # 通用警告
+        await notifier.alert_warning(action.symbol, action.reason)
