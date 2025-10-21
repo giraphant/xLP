@@ -30,12 +30,13 @@ xLP/
 │   │   └── exceptions.py         # Business exceptions
 │   │
 │   ├── utils/                    # 🔧 Utilities
-│   │   ├── config_validator.py   # Configuration validation
-│   │   ├── circuit_breaker.py    # Failure protection
+│   │   ├── config.py             # Pydantic configuration
+│   │   ├── breakers.py           # Circuit breaker
 │   │   └── logging_utils.py      # Sensitive data masking
 │   │
 │   ├── monitoring/               # 📊 Observability
-│   │   ├── metrics.py            # Performance metrics
+│   │   ├── prometheus_metrics.py # Performance metrics
+│   │   ├── matsu_reporter.py     # External monitoring
 │   │   └── reports.py            # Position reports & PnL
 │   │
 │   ├── pools/                    # LP pool calculators
@@ -44,17 +45,24 @@ xLP/
 │   │
 │   ├── exchanges/                # Exchange integrations
 │   │   ├── interface.py         # Exchange abstraction
-│   │   └── lighter.py           # Lighter DEX integration
+│   │   ├── lighter/             # Lighter DEX (modularized)
+│   │   └── mock/                # Mock exchange for testing
 │   │
 │   └── notifications/            # Alert system
-│       └── pushover.py          # Pushover notifications
+│       └── apprise_notifier.py  # Apprise notifications
+│
+├── deploy/                       # 📦 Deployment files
+│   ├── Dockerfile               # Container image
+│   ├── .dockerignore            # Build exclusions
+│   ├── .env.example             # Environment template
+│   ├── config.json              # JSON config template (optional)
+│   ├── state_template.json      # State file template
+│   └── README.md                # Deployment guide
 │
 ├── tests/                        # Test suite
-├── docs/                         # Documentation
-├── Dockerfile                    # Container image
 ├── docker-compose.yml            # One-command deployment
-├── .env.example                 # Environment template
-└── config.json                  # Configuration (optional)
+├── requirements.txt              # Python dependencies
+└── README.md                     # This file
 ```
 
 ## Key Features
@@ -120,13 +128,13 @@ Positions tracked by symbol (SOL, ETH, BTC, BONK), not by pool. JLP and ALP posi
 
 ## Quick Start
 
-**🐳 Recommended: Docker Deployment** (see [docs/QUICKSTART.md](docs/QUICKSTART.md))
+**🐳 Recommended: Docker Deployment** (see [deploy/README.md](deploy/README.md) for details)
 
 ```bash
 # 1. Clone and configure
 git clone https://github.com/giraphant/xLP.git
 cd xLP
-cp .env.example .env
+cp deploy/.env.example .env
 nano .env  # Fill in your settings
 
 # 2. Start with one command
@@ -141,7 +149,7 @@ docker-compose logs -f
 
 **All configuration via `.env` file** (12-factor app compliant):
 
-**Optional**: You can also create `config.json` from the example template, but environment variables take priority.
+Configuration is loaded via environment variables (`.env` file) with Pydantic validation. No `config.json` file is needed.
 
 ```env
 # ===== Required =====
