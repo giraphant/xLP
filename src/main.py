@@ -13,6 +13,7 @@ Linus风格：
 import asyncio
 import logging
 import sys
+import os
 
 # 配置
 from utils.config import HedgeConfig
@@ -32,10 +33,21 @@ from hedge_bot import HedgeBot
 from exchanges.interface import create_exchange
 from pools import jlp, alp
 
+# 统一的日志配置
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+LOG_FORMAT = "%(asctime)s [%(levelname)-8s] %(name)-20s - %(message)s"
+LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=getattr(logging, LOG_LEVEL),
+    format=LOG_FORMAT,
+    datefmt=LOG_DATE_FORMAT
 )
+
+# 设置第三方库的日志级别（避免太吵）
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("asyncio").setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 
@@ -83,8 +95,9 @@ async def main():
         metrics.record_error(**kw)
 
     async def on_report_async(summary):
-        """包装同步回调"""
-        logger.info(f"📊 Summary: {summary}")
+        """包装同步回调 - hedge_bot已输出详细报告，这里只记录关键指标"""
+        # 不再打印扁平的字典，hedge_bot里已经有详细报告了
+        pass
 
     # 组装HedgeBot
     bot = HedgeBot(
@@ -107,12 +120,8 @@ async def main():
         while True:
             try:
                 summary = await bot.run_once()
-                logger.info(f"✅ Run complete: {summary['actions_executed']} actions")
-
-                # 显示指标（同步调用，无需 await）
-                if summary['actions_executed'] > 0:
-                    metrics_summary = metrics.get_summary()
-                    logger.info(f"📈 Total actions: {metrics_summary['metrics'].get('actions_total', 0)}")
+                # hedge_bot 已输出详细报告，这里只记录简单状态
+                logger.info(f"⏸️  Waiting {interval}s until next run...")
 
             except Exception as e:
                 logger.error(f"❌ Run failed: {e}", exc_info=True)
