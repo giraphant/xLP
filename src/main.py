@@ -51,8 +51,7 @@ setup_structlog(
 class HedgeBot:
     """对冲机器人主类（增强错误处理）"""
 
-    def __init__(self, config_path: str = "config.json"):
-        self.config_path = config_path
+    def __init__(self):
         self.engine = None
         self.running = False
         self.error_count = 0
@@ -62,7 +61,7 @@ class HedgeBot:
     async def initialize(self):
         """初始化引擎（可能失败）"""
         try:
-            self.engine = HedgeEngine(self.config_path)
+            self.engine = HedgeEngine()
             self.logger.info("对冲引擎初始化成功")
             self.error_count = 0  # 重置错误计数
         except ConfigError as e:

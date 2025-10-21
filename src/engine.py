@@ -40,10 +40,8 @@ class HedgeEngine:
     4. Report - 生成报告
     """
 
-    def __init__(self, config_path: str = "config.json"):
-        """初始化引擎"""
-        self.config_path = Path(config_path)
-
+    def __init__(self):
+        """初始化引擎（配置从环境变量读取）"""
         # 加载配置
         try:
             self.validated_config = HedgeConfig()

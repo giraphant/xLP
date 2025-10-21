@@ -26,28 +26,11 @@ class ExchangeName(str, Enum):
 
 class ExchangeConfig(BaseModel):
     """交易所配置"""
-    name: ExchangeName = Field(
-        default=ExchangeName.MOCK,
-        description="Exchange name (mock or lighter)"
-    )
-    private_key: str = Field(
-        default="",
-        description="Private key for exchange authentication"
-    )
-    account_index: int = Field(
-        default=0,
-        ge=0,
-        description="Account index for the exchange"
-    )
-    api_key_index: int = Field(
-        default=0,
-        ge=0,
-        description="API key index for the exchange"
-    )
-    base_url: str = Field(
-        default="https://mainnet.zklighter.elliot.ai",
-        description="Base URL for the exchange API"
-    )
+    name: ExchangeName = ExchangeName.MOCK
+    private_key: str = ""
+    account_index: int = Field(default=0, ge=0)
+    api_key_index: int = Field(default=0, ge=0)
+    base_url: str = "https://mainnet.zklighter.elliot.ai"
 
     @field_validator('private_key')
     @classmethod
@@ -61,54 +44,28 @@ class ExchangeConfig(BaseModel):
 
 class PushoverConfig(BaseModel):
     """Pushover 通知配置"""
-    user_key: str = Field(
-        default="",
-        description="Pushover user key"
-    )
-    api_token: str = Field(
-        default="",
-        description="Pushover API token"
-    )
-    enabled: bool = Field(
-        default=True,
-        description="Enable Pushover notifications"
-    )
+    user_key: str = ""
+    api_token: str = ""
+    enabled: bool = True
 
     @model_validator(mode='after')
     def validate_credentials(self):
-        """验证凭据：如果启用则需要提供凭据"""
         if self.enabled and (not self.user_key or not self.api_token):
-            logger.warning("Pushover enabled but credentials not provided, notifications will be disabled")
+            logger.warning("Pushover enabled but credentials missing")
         return self
 
 
 class MatsuConfig(BaseModel):
     """Matsu 监控配置"""
-    enabled: bool = Field(
-        default=False,
-        description="Enable Matsu monitoring"
-    )
-    api_endpoint: str = Field(
-        default="https://distill.baa.one/api/hedge-data",
-        description="Matsu API endpoint"
-    )
-    auth_token: str = Field(
-        default="",
-        description="Matsu webhook secret token"
-    )
-    pool_name: str = Field(
-        default="",
-        description="Pool name for reporting"
-    )
+    enabled: bool = False
+    api_endpoint: str = "https://distill.baa.one/api/hedge-data"
+    auth_token: str = ""
+    pool_name: str = ""
 
     @model_validator(mode='after')
     def validate_matsu_config(self):
-        """验证 Matsu 配置"""
-        if self.enabled:
-            if not self.pool_name:
-                logger.warning("Matsu enabled but pool_name not provided")
-            if not self.auth_token:
-                logger.warning("Matsu enabled but auth_token not provided")
+        if self.enabled and (not self.pool_name or not self.auth_token):
+            logger.warning("Matsu enabled but pool_name/auth_token missing")
         return self
 
 
@@ -120,177 +77,54 @@ class HedgeConfig(BaseSettings):
     环境变量优先级高于配置文件
     """
 
-    # ===== Pool 配置 =====
-    jlp_amount: float = Field(
-        default=0.0,
-        ge=0,
-        description="JLP pool amount in USD"
-    )
-    alp_amount: float = Field(
-        default=0.0,
-        ge=0,
-        description="ALP pool amount in USD"
-    )
+    # Pool
+    jlp_amount: float = Field(default=0.0, ge=0)
+    alp_amount: float = Field(default=0.0, ge=0)
 
-    # ===== 阈值配置 =====
-    threshold_min_usd: float = Field(
-        default=5.0,
-        gt=0,
-        description="Minimum threshold in USD"
-    )
-    threshold_max_usd: float = Field(
-        default=20.0,
-        gt=0,
-        description="Maximum threshold in USD"
-    )
-    threshold_step_usd: float = Field(
-        default=2.5,
-        gt=0,
-        description="Threshold step size in USD"
-    )
+    # 阈值
+    threshold_min_usd: float = Field(default=5.0, gt=0)
+    threshold_max_usd: float = Field(default=20.0, gt=0)
+    threshold_step_usd: float = Field(default=2.5, gt=0)
 
-    # ===== 时间配置 =====
-    check_interval_seconds: int = Field(
-        default=60,
-        ge=1,
-        description="Check interval in seconds"
-    )
-    timeout_minutes: int = Field(
-        default=20,
-        ge=1,
-        description="Order timeout in minutes"
-    )
-    order_price_offset: float = Field(
-        default=0.2,
-        ge=0,
-        le=10,
-        description="Order price offset percentage"
-    )
-    close_ratio: float = Field(
-        default=40.0,
-        gt=0,
-        le=100,
-        description="Close ratio percentage"
-    )
-    cooldown_after_fill_minutes: int = Field(
-        default=5,
-        ge=0,
-        description="Cooldown period after fill in minutes"
-    )
+    # 时间和比例
+    check_interval_seconds: int = Field(default=60, ge=1)
+    timeout_minutes: int = Field(default=20, ge=1)
+    order_price_offset: float = Field(default=0.2, ge=0, le=10)
+    close_ratio: float = Field(default=40.0, gt=0, le=100)
+    cooldown_after_fill_minutes: int = Field(default=5, ge=0)
 
-    # ===== 初始偏移配置 =====
-    initial_offset_sol: float = Field(
-        default=0.0,
-        alias="INITIAL_OFFSET_SOL",
-        description="Initial offset for SOL"
-    )
-    initial_offset_eth: float = Field(
-        default=0.0,
-        alias="INITIAL_OFFSET_ETH",
-        description="Initial offset for ETH"
-    )
-    initial_offset_btc: float = Field(
-        default=0.0,
-        alias="INITIAL_OFFSET_BTC",
-        description="Initial offset for BTC"
-    )
-    initial_offset_bonk: float = Field(
-        default=0.0,
-        alias="INITIAL_OFFSET_BONK",
-        description="Initial offset for BONK"
-    )
+    # 初始偏移
+    initial_offset_sol: float = Field(default=0.0, alias="INITIAL_OFFSET_SOL")
+    initial_offset_eth: float = Field(default=0.0, alias="INITIAL_OFFSET_ETH")
+    initial_offset_btc: float = Field(default=0.0, alias="INITIAL_OFFSET_BTC")
+    initial_offset_bonk: float = Field(default=0.0, alias="INITIAL_OFFSET_BONK")
 
-    # ===== 预定义偏移配置 =====
-    predefined_offset_sol: float = Field(
-        default=0.0,
-        alias="PREDEFINED_OFFSET_SOL",
-        description="Predefined offset for SOL"
-    )
-    predefined_offset_eth: float = Field(
-        default=0.0,
-        alias="PREDEFINED_OFFSET_ETH",
-        description="Predefined offset for ETH"
-    )
-    predefined_offset_btc: float = Field(
-        default=0.0,
-        alias="PREDEFINED_OFFSET_BTC",
-        description="Predefined offset for BTC"
-    )
-    predefined_offset_bonk: float = Field(
-        default=0.0,
-        alias="PREDEFINED_OFFSET_BONK",
-        description="Predefined offset for BONK"
-    )
+    # 预定义偏移
+    predefined_offset_sol: float = Field(default=0.0, alias="PREDEFINED_OFFSET_SOL")
+    predefined_offset_eth: float = Field(default=0.0, alias="PREDEFINED_OFFSET_ETH")
+    predefined_offset_btc: float = Field(default=0.0, alias="PREDEFINED_OFFSET_BTC")
+    predefined_offset_bonk: float = Field(default=0.0, alias="PREDEFINED_OFFSET_BONK")
 
-    # ===== 其他配置 =====
-    rpc_url: str = Field(
-        default="https://api.mainnet-beta.solana.com",
-        description="Solana RPC URL"
-    )
+    # RPC
+    rpc_url: str = "https://api.mainnet-beta.solana.com"
 
-    # ===== 嵌套配置 =====
-    exchange_name: str = Field(
-        default="mock",
-        alias="EXCHANGE_NAME",
-        description="Exchange name"
-    )
-    exchange_private_key: str = Field(
-        default="",
-        alias="EXCHANGE_PRIVATE_KEY",
-        description="Exchange private key"
-    )
-    exchange_account_index: int = Field(
-        default=0,
-        alias="EXCHANGE_ACCOUNT_INDEX",
-        description="Exchange account index"
-    )
-    exchange_api_key_index: int = Field(
-        default=0,
-        alias="EXCHANGE_API_KEY_INDEX",
-        description="Exchange API key index"
-    )
-    exchange_base_url: str = Field(
-        default="https://mainnet.zklighter.elliot.ai",
-        alias="EXCHANGE_BASE_URL",
-        description="Exchange base URL"
-    )
+    # Exchange
+    exchange_name: str = Field(default="mock", alias="EXCHANGE_NAME")
+    exchange_private_key: str = Field(default="", alias="EXCHANGE_PRIVATE_KEY")
+    exchange_account_index: int = Field(default=0, alias="EXCHANGE_ACCOUNT_INDEX")
+    exchange_api_key_index: int = Field(default=0, alias="EXCHANGE_API_KEY_INDEX")
+    exchange_base_url: str = Field(default="https://mainnet.zklighter.elliot.ai", alias="EXCHANGE_BASE_URL")
 
-    pushover_user_key: str = Field(
-        default="",
-        alias="PUSHOVER_USER_KEY",
-        description="Pushover user key"
-    )
-    pushover_api_token: str = Field(
-        default="",
-        alias="PUSHOVER_API_TOKEN",
-        description="Pushover API token"
-    )
-    pushover_enabled: bool = Field(
-        default=True,
-        alias="PUSHOVER_ENABLED",
-        description="Enable Pushover notifications"
-    )
+    # Pushover
+    pushover_user_key: str = Field(default="", alias="PUSHOVER_USER_KEY")
+    pushover_api_token: str = Field(default="", alias="PUSHOVER_API_TOKEN")
+    pushover_enabled: bool = Field(default=True, alias="PUSHOVER_ENABLED")
 
-    matsu_enabled: bool = Field(
-        default=False,
-        alias="MATSU_ENABLED",
-        description="Enable Matsu monitoring"
-    )
-    matsu_api_endpoint: str = Field(
-        default="https://distill.baa.one/api/hedge-data",
-        alias="MATSU_API_ENDPOINT",
-        description="Matsu API endpoint"
-    )
-    matsu_auth_token: str = Field(
-        default="",
-        alias="MATSU_AUTH_TOKEN",
-        description="Matsu webhook secret token"
-    )
-    matsu_pool_name: str = Field(
-        default="",
-        alias="MATSU_POOL_NAME",
-        description="Matsu pool name"
-    )
+    # Matsu
+    matsu_enabled: bool = Field(default=False, alias="MATSU_ENABLED")
+    matsu_api_endpoint: str = Field(default="https://distill.baa.one/api/hedge-data", alias="MATSU_API_ENDPOINT")
+    matsu_auth_token: str = Field(default="", alias="MATSU_AUTH_TOKEN")
+    matsu_pool_name: str = Field(default="", alias="MATSU_POOL_NAME")
 
     # Pydantic 配置
     model_config = SettingsConfigDict(
@@ -302,45 +136,26 @@ class HedgeConfig(BaseSettings):
     )
 
     @model_validator(mode='after')
-    def validate_thresholds(self):
-        """验证阈值配置"""
+    def validate_config(self):
+        """验证配置"""
+        # 阈值检查
         if self.threshold_min_usd >= self.threshold_max_usd:
-            raise ValueError(
-                f"threshold_min_usd ({self.threshold_min_usd}) must be less than "
-                f"threshold_max_usd ({self.threshold_max_usd})"
-            )
+            raise ValueError(f"threshold_min ({self.threshold_min_usd}) must be < threshold_max ({self.threshold_max_usd})")
 
-        # 检查步长是否合理
         num_steps = (self.threshold_max_usd - self.threshold_min_usd) / self.threshold_step_usd
         if num_steps > 100:
             logger.warning(f"Large number of threshold steps: {num_steps:.0f}")
 
-        return self
-
-    @model_validator(mode='after')
-    def validate_pools(self):
-        """验证池子配置"""
+        # 池子检查
         if self.jlp_amount == 0 and self.alp_amount == 0:
-            logger.warning("Both JLP and ALP amounts are 0, no hedging will occur")
-        return self
+            logger.warning("Both JLP and ALP amounts are 0")
 
-    @model_validator(mode='after')
-    def check_large_offsets(self):
-        """检查初始偏移是否过大"""
-        large_offsets = []
-        offsets = {
-            'SOL': self.initial_offset_sol,
-            'ETH': self.initial_offset_eth,
-            'BTC': self.initial_offset_btc,
-            'BONK': self.initial_offset_bonk,
-        }
-
-        for symbol, value in offsets.items():
-            if abs(value) > 1000:
-                large_offsets.append(f"{symbol}={value}")
-
-        if large_offsets:
-            logger.warning(f"Large initial offsets detected: {', '.join(large_offsets)}")
+        # 偏移检查
+        offsets = {'SOL': self.initial_offset_sol, 'ETH': self.initial_offset_eth,
+                   'BTC': self.initial_offset_btc, 'BONK': self.initial_offset_bonk}
+        large = [f"{s}={v}" for s, v in offsets.items() if abs(v) > 1000]
+        if large:
+            logger.warning(f"Large offsets: {', '.join(large)}")
 
         return self
 
