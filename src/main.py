@@ -18,10 +18,7 @@ from core.exceptions import (
     HedgeEngineError,
     RecoverableError,
     CriticalError,
-    ConfigError,
-    classify_exception,
-    should_retry,
-    get_retry_delay
+    ConfigError
 )
 from utils.breakers import CircuitOpenError
 from utils.structlog_config import setup_structlog
@@ -130,7 +127,7 @@ class HedgeBot:
                     # 使用 Tenacity 进行重试
                     try:
                         async for attempt in AsyncRetrying(
-                            stop=stop_after_attempt(e.max_retries),
+                            stop=stop_after_attempt(3),
                             wait=wait_exponential(min=1, max=60),
                             before_sleep=before_sleep_log(self.logger, logging.INFO)
                         ):
@@ -146,25 +143,14 @@ class HedgeBot:
                     # 其他对冲引擎错误
                     self.error_count += 1
                     self.logger.error(f"对冲引擎错误: {e}")
-
-                    if e.should_notify and self.engine:
-                        try:
-                            await self.engine.notifier.alert_error("System", str(e))
-                        except:
-                            pass
-
-                    retry_delay = e.retry_after if e.retry_after else interval
-                    self.logger.info(f"等待 {retry_delay} 秒后重试...")
-                    await asyncio.sleep(retry_delay)
+                    await asyncio.sleep(interval)
 
                 except Exception as e:
-                    # 未分类的错误，尝试分类
-                    classified_error = classify_exception(e)
-                    self.logger.error(f"未预期的错误 ({classified_error.__class__.__name__}): {e}")
+                    # 未知错误
                     self.error_count += 1
-
-                    if self.running:
-                        await asyncio.sleep(interval)
+                    self.logger.error(f"未知错误: {e}")
+                    self.logger.error(f"Traceback: {traceback.format_exc()}")
+                    await asyncio.sleep(interval)
 
                 # 检查连续错误次数
                 if self.error_count >= self.max_consecutive_errors:
