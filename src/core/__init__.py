@@ -1,7 +1,6 @@
 """
-Core utility modules for hedge engine
+Core modules for hedge engine - 4-step architecture
 """
 
-from .offset_tracker import calculate_offset_and_cost
-
-__all__ = ['calculate_offset_and_cost']
+# prepare/decide/execute/report 由各自模块直接导入
+# exceptions 也由需要的模块直接导入
