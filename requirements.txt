@@ -14,9 +14,6 @@ pydantic>=2.0.0         # Data validation and settings management
 pydantic-settings>=2.0.0  # Settings management from env vars
 tenacity>=8.0.0         # Retry library with exponential backoff
 
-# Monitoring and Metrics
-prometheus-client>=0.18.0  # Industry-standard metrics collection
-
 # Circuit Breaker
 aiobreaker>=1.2.0       # Circuit breaker with native asyncio support
 

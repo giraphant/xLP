@@ -22,8 +22,7 @@ from core.decision_engine import DecisionEngine
 from core.action_executor import ActionExecutor
 from utils.breakers import CircuitBreakerManager
 from utils.config import HedgeConfig, ValidationError
-from monitoring.prometheus_metrics import PrometheusMetrics as MetricsCollector
-from monitoring.matsu_reporter import MatsuReporter
+from utils.matsu_reporter import MatsuReporter
 from pools import jlp, alp
 
 logger = logging.getLogger(__name__)
@@ -48,9 +47,6 @@ class HedgeEngine:
         # 初始化熔断器管理器
         self.circuit_manager = CircuitBreakerManager()
 
-        # 初始化指标收集器
-        self.metrics = MetricsCollector()
-
         # 初始化交易所和通知器
         self.exchange = create_exchange(self.config["exchange"])
         self.notifier = Notifier(self.config["pushover"])
@@ -66,7 +62,7 @@ class HedgeEngine:
             exchange=self.exchange,
             state_manager=self.state_manager,
             notifier=self.notifier,
-            metrics_collector=self.metrics,
+            metrics_collector=None,  # Metrics已移除
             circuit_manager=self.circuit_manager
         )
 
@@ -147,12 +143,6 @@ class HedgeEngine:
             # 执行管道
             context = await self.pipeline.execute(context)
 
-            # 生成详细报告（如果启用）
-            import os
-            if os.getenv("ENABLE_DETAILED_REPORTS", "true").lower() in ("true", "1", "yes"):
-                from monitoring.reports import generate_position_report
-                await generate_position_report(context, self.state_manager)
-
             # 处理管道结果
             if context.results:
                 success_count = sum(1 for r in context.results if r.status.value == "success")
@@ -208,15 +198,8 @@ class HedgeEngine:
             # 清理超时的订单监控
             await self.state_manager.cleanup_stale_orders()
 
-            # 记录处理时间指标
+            # 记录处理时间
             processing_time = time.time() - start_time
-            self.metrics.record_pipeline_duration("pipeline_run", processing_time)
-
-            # 定期导出指标摘要（每10次运行）
-            total_runs = (await self.state_manager.get_metadata()).get("total_runs", 0)
-            if total_runs % 10 == 0:
-                summary = await self.metrics.export_summary()
-                logger.info(f"Metrics Summary: {json.dumps(summary, indent=2)}")
 
             logger.info("=" * 70)
             logger.info(f"✅ PIPELINE COMPLETED - Duration: {processing_time:.2f}s")
@@ -224,8 +207,6 @@ class HedgeEngine:
 
         except Exception as e:
             logger.error(f"Pipeline execution error: {e}")
-            # 记录错误指标
-            self.metrics.record_error(type(e).__name__, str(e))
 
             # 记录最后的错误
             await self.state_manager.update_metadata({

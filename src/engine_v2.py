@@ -23,8 +23,7 @@ from core.state_manager import StateManager
 from core.exceptions import HedgeEngineError, InvalidConfigError
 from utils.config import HedgeConfig, ValidationError
 from utils.breakers import CircuitBreakerManager
-from monitoring.prometheus_metrics import PrometheusMetrics as MetricsCollector
-from monitoring.matsu_reporter import MatsuReporter
+from utils.matsu_reporter import MatsuReporter
 from pools import jlp, alp
 
 logger = logging.getLogger(__name__)
@@ -57,7 +56,6 @@ class HedgeEngineV2:
         # 初始化组件
         self.state_manager = StateManager()
         self.circuit_manager = CircuitBreakerManager()
-        self.metrics = MetricsCollector()
         self.exchange = create_exchange(self.config["exchange"])
         self.notifier = Notifier(self.config["pushover"])
 

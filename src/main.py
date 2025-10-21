@@ -186,19 +186,6 @@ class HedgeBot:
 
         if self.engine:
             try:
-                # 导出最终指标
-                try:
-                    # 导出指标摘要
-                    metrics_summary = await self.engine.metrics.export_summary()
-                    self.logger.info("最终运行指标:")
-                    self.logger.info(json.dumps(metrics_summary, indent=2))
-
-                    # 保存完整指标到文件
-                    metrics_file = Path("logs") / f"metrics_final_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-                    await self.engine.metrics.save_to_file(metrics_file, format="json")
-                except Exception as e:
-                    self.logger.warning(f"无法导出指标: {e}")
-
                 # 显示熔断器状态
                 breaker_stats = self.engine.circuit_manager.get_all_stats()
                 if breaker_stats:

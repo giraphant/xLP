@@ -149,8 +149,9 @@ class ActionExecutor:
                 }
             })
 
-            # 记录指标
-            self.metrics.record_order_placed(action.symbol, action.side, 'placed')
+            # 记录指标（如果启用）
+            if self.metrics:
+                self.metrics.record_order_placed(action.symbol, action.side, 'placed')
 
             # 增加统计
             await self.state_manager.increment_counter(
@@ -169,9 +170,10 @@ class ActionExecutor:
             logger.error(f"Failed to place limit order: {e}")
             logger.error(f"Full traceback:\n{traceback.format_exc()}")
 
-            # 记录失败指标
-            self.metrics.record_order_placed(action.symbol, action.side, 'failed')
-            self.metrics.record_error("limit_order", str(e))
+            # 记录失败指标（如果启用）
+            if self.metrics:
+                self.metrics.record_order_placed(action.symbol, action.side, 'failed')
+                self.metrics.record_error("limit_order", str(e))
 
             raise OrderPlacementError(
                 action.symbol,
@@ -208,13 +210,14 @@ class ActionExecutor:
                     action.side
                 )
 
-                # 记录强制平仓指标
-                current_price = await self.exchange.get_price(action.symbol)
-                await self.metrics.record_forced_close(
-                    action.symbol,
-                    action.size,
-                    current_price
-                )
+                # 记录强制平仓指标（如果启用）
+                if self.metrics:
+                    current_price = await self.exchange.get_price(action.symbol)
+                    await self.metrics.record_forced_close(
+                        action.symbol,
+                        action.size,
+                        current_price
+                    )
 
                 await self.state_manager.increment_counter(
                     action.symbol, "stats.forced_closes"
@@ -230,8 +233,9 @@ class ActionExecutor:
                 }
             })
 
-            # 记录指标
-            self.metrics.record_order_placed(action.symbol, action.side, 'placed')
+            # 记录指标（如果启用）
+            if self.metrics:
+                self.metrics.record_order_placed(action.symbol, action.side, 'placed')
 
             return ExecutionResult(
                 action=action,
@@ -251,9 +255,10 @@ class ActionExecutor:
                 str(e)
             )
 
-            # 记录失败指标
-            self.metrics.record_order_placed(action.symbol, action.side, 'failed')
-            self.metrics.record_error("market_order", str(e))
+            # 记录失败指标（如果启用）
+            if self.metrics:
+                self.metrics.record_order_placed(action.symbol, action.side, 'failed')
+                self.metrics.record_error("market_order", str(e))
 
             raise OrderPlacementError(
                 action.symbol,
@@ -295,8 +300,9 @@ class ActionExecutor:
                     action.metadata.get("current_price")
                 )
 
-                # 记录阈值突破
-                self.metrics.record_error(f'threshold_breach_{action.symbol}', 'medium')
+                # 记录阈值突破（如果启用）
+                if self.metrics:
+                    self.metrics.record_error(f'threshold_breach_{action.symbol}', 'medium')
 
             elif alert_type == "error":
                 await self.notifier.alert_error(
