@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 def with_order_confirmation(delay_ms: float = 100):
     """
-    订单确认装饰器 - 双重确认机制
+    订单确认装饰器 - 简化版本（无状态确认）
 
     使用示例：
         @with_order_confirmation(delay_ms=100)
@@ -37,14 +37,10 @@ def with_order_confirmation(delay_ms: float = 100):
             # 1. 下单
             order_id = await func(exchange, symbol, *args, **kwargs)
 
-            # 2. 双重确认：等待后验证订单状态
+            # 2. 简单延迟（等待交易所处理）
             await asyncio.sleep(delay_ms / 1000)
-            status = await exchange.get_order_status(symbol, order_id)
 
-            if status not in ["open", "filled", "partial"]:
-                raise Exception(f"Order {order_id} failed with status: {status}")
-
-            logger.debug(f"Order confirmed: {order_id} ({status})")
+            logger.debug(f"Order placed: {order_id}")
             return order_id
 
         return wrapper

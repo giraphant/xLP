@@ -247,16 +247,49 @@ class HedgeBot:
 
             # 步骤5: 生成摘要报告
             duration = (datetime.now() - start_time).total_seconds()
+
+            # 统计结果
+            success_count = sum(1 for r in results if r.get("success"))
+            failed_count = len(results) - success_count
+
+            # 按类型统计
+            action_stats = {}
+            for r in results:
+                action_type = r.get("action", "unknown")
+                if action_type not in action_stats:
+                    action_stats[action_type] = {"success": 0, "failed": 0}
+
+                if r.get("success"):
+                    action_stats[action_type]["success"] += 1
+                else:
+                    action_stats[action_type]["failed"] += 1
+
             summary = {
                 "timestamp": start_time.isoformat(),
                 "duration": duration,
                 "symbols_processed": len(ideal_hedges),
                 "decisions_made": len(decisions),
                 "actions_executed": len(results),
+                "actions_succeeded": success_count,
+                "actions_failed": failed_count,
+                "action_stats": action_stats,
                 "results": results
             }
 
-            logger.info(f"✅ Run complete: {len(results)} actions in {duration:.2f}s")
+            # 清晰的总结日志
+            logger.info("="*50)
+            logger.info("📋 RUN SUMMARY")
+            logger.info("="*50)
+            logger.info(f"⏱️  Duration: {duration:.2f}s")
+            logger.info(f"📊 Symbols Processed: {len(ideal_hedges)}")
+            logger.info(f"🎯 Decisions Made: {len(decisions)}")
+            logger.info(f"⚡ Actions Executed: {len(results)} ({success_count} succeeded, {failed_count} failed)")
+
+            if action_stats:
+                logger.info("📈 Action Breakdown:")
+                for action_type, stats in action_stats.items():
+                    logger.info(f"   • {action_type}: {stats['success']} ✅ / {stats['failed']} ❌")
+
             await self.on_report(summary=summary)
 
             return summary
@@ -443,6 +476,13 @@ class HedgeBot:
 
                     # 更新状态（停止监控）
                     self.state.stop_monitoring(symbol, with_fill=False)
+
+            elif action == "alert":
+                # 警报 - 记录到日志和通知系统
+                logger.warning(f"⚠️  ALERT: {symbol} - {decision.reason}")
+                offset_usd = decision.metadata.get("offset_usd", 0)
+                logger.warning(f"   Offset: ${offset_usd:.2f} exceeds threshold")
+                result["success"] = True  # Alert 总是成功
 
             await self.on_action(symbol=symbol, action=action, result=result)
 
