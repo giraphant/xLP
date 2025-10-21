@@ -7,12 +7,12 @@ Linus风格：
 - Adapters处理I/O
 - 回调注入插件
 - 数据结构优先
+- YAGNI原则（不写不需要的代码）
 """
 
 import asyncio
 import logging
 import sys
-from pathlib import Path
 
 # 配置
 from utils.config import HedgeConfig
@@ -33,10 +33,6 @@ from hedge_bot import HedgeBot
 from exchanges.interface import create_exchange
 from pools import jlp, alp
 
-# Utils
-from utils.rate_limiter import RateLimiter
-from utils.price_cache import PriceCache
-
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -45,21 +41,16 @@ logger = logging.getLogger(__name__)
 
 
 async def main():
-    """主函数"""
+    """主函数 - 极简启动"""
     logger.info("🚀 Starting xLP Hedge Engine")
 
     # 加载配置
     config = HedgeConfig()
     config_dict = config.to_dict()
 
-    # 初始化适配器
+    # 初始化适配器（极简版，无不需要的组件）
     exchange_impl = create_exchange(config_dict["exchange"])
-    rate_limiter = RateLimiter(max_tokens=10, refill_rate=1.0)
-
-    exchange_client = ExchangeClient(
-        exchange_impl=exchange_impl,
-        rate_limiter=rate_limiter
-    )
+    exchange_client = ExchangeClient(exchange_impl=exchange_impl)
 
     state_store = StateStore()
 
@@ -67,13 +58,9 @@ async def main():
         "jlp": jlp.calculate_hedge,
         "alp": alp.calculate_hedge
     }
-    pool_cache = PriceCache(default_ttl_seconds=60)
-    pool_fetcher = PoolFetcher(
-        pool_calculators=pool_calculators,
-        cache=pool_cache
-    )
+    pool_fetcher = PoolFetcher(pool_calculators=pool_calculators)
 
-    # 初始化插件
+    # 初始化插件（可选）
     audit_log = AuditLog(
         log_file="logs/audit.jsonl",
         enabled=config_dict.get("audit_enabled", True)

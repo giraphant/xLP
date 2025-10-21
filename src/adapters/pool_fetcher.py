@@ -1,46 +1,38 @@
 #!/usr/bin/env python3
 """
-Pool数据获取器 - 薄封装
+Pool数据获取器 - 极简薄封装
 
 职责：
 - 调用池子计算函数获取ideal hedges
 - 合并多个池子的数据
-- 可选的结果缓存
 
 特点：
 - 只做I/O操作（调用池子API）
 - 无业务逻辑
-- 可插拔缓存
+- 无缓存（YAGNI原则）
 """
 
 import logging
-from typing import Dict, Callable, Optional, Any
-from datetime import datetime, timedelta
+from typing import Dict, Callable
 
 logger = logging.getLogger(__name__)
 
 
 class PoolFetcher:
     """
-    Pool数据获取器 - 替代原来散落在pipeline中的池子数据获取逻辑
+    Pool数据获取器 - 极简版本
 
-    简化为~60行的薄封装
+    替代原来散落在pipeline中的池子数据获取逻辑（~40行）
     """
 
-    def __init__(
-        self,
-        pool_calculators: Dict[str, Callable],
-        cache: Optional[Any] = None
-    ):
+    def __init__(self, pool_calculators: Dict[str, Callable]):
         """
         初始化Pool获取器
 
         Args:
             pool_calculators: {"jlp": jlp.calculate_hedge, "alp": alp.calculate_hedge}
-            cache: 可选的缓存实例（需要有get/set方法）
         """
         self.calculators = pool_calculators
-        self.cache = cache
 
     async def fetch_pool_hedges(
         self,
@@ -87,48 +79,3 @@ class PoolFetcher:
 
         logger.info(f"Pool hedges merged: {len(all_hedges)} symbols total")
         return all_hedges
-
-    async def fetch_pool_data_with_cache(
-        self,
-        pool_configs: Dict[str, dict],
-        cache_ttl_seconds: int = 60
-    ) -> Dict[str, float]:
-        """
-        获取池子数据（带缓存）
-
-        Args:
-            pool_configs: 池子配置
-            cache_ttl_seconds: 缓存TTL（秒）
-
-        Returns:
-            合并后的hedges
-        """
-        if not self.cache:
-            # 无缓存，直接获取
-            return await self.fetch_pool_hedges(pool_configs)
-
-        # 尝试从缓存获取
-        cache_key = "pool_hedges"
-        cached = await self.cache.get(cache_key)
-
-        if cached:
-            cached_time = cached.get("timestamp")
-            cached_data = cached.get("data")
-
-            if cached_time and cached_data:
-                age = (datetime.now() - datetime.fromisoformat(cached_time)).total_seconds()
-                if age < cache_ttl_seconds:
-                    logger.debug(f"Cache hit (age={age:.1f}s)")
-                    return cached_data
-
-        # 缓存未命中，重新获取
-        logger.debug("Cache miss, fetching fresh data")
-        hedges = await self.fetch_pool_hedges(pool_configs)
-
-        # 写入缓存
-        await self.cache.set(cache_key, {
-            "timestamp": datetime.now().isoformat(),
-            "data": hedges
-        })
-
-        return hedges
