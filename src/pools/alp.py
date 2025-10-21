@@ -149,7 +149,9 @@ async def calculate_hedge(alp_amount: float) -> dict:
                         "per_alp": per_alp * jitosol_to_sol_ratio,
                     }
             else:
-                hedge_positions[symbol] = {
+                # 符号映射：WBTC -> BTC（交易所不支持WBTC）
+                exchange_symbol = "BTC" if symbol == "WBTC" else symbol
+                hedge_positions[exchange_symbol] = {
                     "amount": hedge_amount,
                     "per_alp": per_alp,
                 }

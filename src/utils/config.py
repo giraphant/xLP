@@ -9,11 +9,72 @@
 """
 
 import os
+import json
 import logging
 from typing import Dict, Any, Optional
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+def load_config_from_json(config_file: str = "config.json") -> Dict[str, Any]:
+    """
+    从 JSON 文件加载配置
+
+    Args:
+        config_file: JSON 配置文件路径
+
+    Returns:
+        配置字典
+    """
+    config_path = Path(config_file)
+    if not config_path.exists():
+        raise FileNotFoundError(f"Config file not found: {config_file}")
+
+    with open(config_path, 'r') as f:
+        config = json.load(f)
+
+    # 标准化字段名（兼容main分支的config.json）
+    normalized_config = {
+        # Pool 配置
+        "jlp_amount": config.get("jlp_amount", 0.0),
+        "alp_amount": config.get("alp_amount", 0.0),
+
+        # 阈值配置（兼容两种命名）
+        "threshold_min_usd": config.get("threshold_min_usd", config.get("threshold_min", 5.0)),
+        "threshold_max_usd": config.get("threshold_max_usd", config.get("threshold_max", 20.0)),
+        "threshold_step_usd": config.get("threshold_step_usd", config.get("threshold_step", 2.5)),
+
+        # 订单配置
+        "order_price_offset": config.get("order_price_offset", 0.2),
+        "close_ratio": config.get("close_ratio", 40.0),
+        "timeout_minutes": config.get("timeout_minutes", 20),
+        "cooldown_after_fill_minutes": config.get("cooldown_after_fill_minutes", 5),
+
+        # 时间配置
+        "interval_seconds": config.get("interval_seconds", config.get("check_interval_seconds", 60)),
+
+        # RPC 配置
+        "rpc_url": config.get("rpc_url", "https://api.mainnet-beta.solana.com"),
+
+        # Exchange 配置
+        "exchange": config.get("exchange", {}),
+
+        # Pushover 配置
+        "pushover": config.get("pushover", {}),
+
+        # Matsu 配置
+        "matsu": config.get("matsu", {}),
+
+        # 初始偏移配置
+        "initial_offset": config.get("initial_offset", {}),
+
+        # 预定义偏移配置
+        "predefined_offset": config.get("predefined_offset", {}),
+    }
+
+    _validate_config(normalized_config)
+    return normalized_config
 
 
 def load_config(env_file: Optional[Path] = None) -> Dict[str, Any]:
@@ -164,6 +225,13 @@ class HedgeConfig:
     """配置类（兼容旧接口）"""
 
     def __init__(self, env_file: Optional[Path] = None):
+        """
+        初始化配置
+
+        Args:
+            env_file: .env文件路径（可选）
+        """
+        # 从环境变量加载配置
         self._config = load_config(env_file)
 
     def to_dict(self) -> Dict[str, Any]:

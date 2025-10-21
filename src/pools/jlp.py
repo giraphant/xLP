@@ -102,7 +102,10 @@ async def calculate_hedge(jlp_amount: float) -> dict:
             per_jlp = net_exposure / total_supply
             hedge_amount = per_jlp * jlp_amount
 
-            hedge_positions[symbol] = {
+            # 符号映射：WBTC -> BTC（交易所不支持WBTC）
+            exchange_symbol = "BTC" if symbol == "WBTC" else symbol
+
+            hedge_positions[exchange_symbol] = {
                 "amount": hedge_amount,
                 "per_jlp": per_jlp,
             }

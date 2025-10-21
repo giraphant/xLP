@@ -71,7 +71,10 @@ class PoolFetcher:
                 for symbol, hedge_data in hedges.items():
                     # 提取amount字段（池子返回的是嵌套结构）
                     amount = hedge_data["amount"] if isinstance(hedge_data, dict) else hedge_data
-                    all_hedges[symbol] = all_hedges.get(symbol, 0.0) + amount
+
+                    # 累加对冲量（负数表示做空）
+                    hedge_amount = -amount
+                    all_hedges[symbol] = all_hedges.get(symbol, 0.0) + hedge_amount
 
                 logger.info(f"✅ {pool_name}: {len(hedges)} symbols fetched")
 

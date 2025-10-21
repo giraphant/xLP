@@ -110,25 +110,64 @@ class HedgeBot:
             执行结果摘要
         """
         start_time = datetime.now()
-        logger.info(f"{'='*70}")
+        logger.info("="*50)
         logger.info(f"🚀 HEDGE BOT RUN - {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
-        logger.info(f"{'='*70}")
+        logger.info("="*50)
 
         try:
             # 步骤1: 获取池子理想对冲
+            logger.info("="*50)
+            logger.info("📊 FETCHING POOL DATA")
+            logger.info("="*50)
+
             pool_configs = {
                 "jlp": {"amount": self.config.get("jlp_amount", 0)},
                 "alp": {"amount": self.config.get("alp_amount", 0)}
             }
+
+            # 显示配置
+            for pool_type, cfg in pool_configs.items():
+                if cfg["amount"] > 0:
+                    logger.info(f"🏊 {pool_type.upper()} Pool: Amount = {cfg['amount']:,.2f}")
+
             ideal_hedges = await self.pools.fetch_pool_hedges(pool_configs)
-            logger.info(f"📊 Ideal hedges: {len(ideal_hedges)} symbols")
+
+            logger.info("📊 IDEAL HEDGES (Negative = Short):")
+            for symbol, hedge in sorted(ideal_hedges.items()):
+                logger.info(f"  💹 {symbol}: {hedge:+.4f}")
+            logger.info(f"✅ Fetched ideal hedges for {len(ideal_hedges)} symbols")
 
             # 步骤2: 获取当前仓位和价格
+            logger.info("="*50)
+            logger.info("💹 FETCHING MARKET DATA")
+            logger.info("="*50)
+
             positions = await self.exchange.get_positions()
             prices = await exchange_helpers.get_prices(self.exchange, list(ideal_hedges.keys()))
-            logger.info(f"💼 Current positions: {len(positions)} symbols")
+
+            logger.info("📈 CURRENT PRICES:")
+            for symbol in sorted(prices.keys()):
+                logger.info(f"  💵 {symbol}: ${prices[symbol]:,.2f}")
+
+            logger.info("📊 ACTUAL POSITIONS:")
+            for symbol in sorted(ideal_hedges.keys()):
+                pos = positions.get(symbol, 0.0)
+                # 应用初始偏移
+                initial_offset = self.config.get("initial_offset", {}).get(symbol, 0.0)
+                if initial_offset != 0:
+                    total_pos = pos + initial_offset
+                    logger.info(f"  📍 {symbol}: {total_pos:+.4f} (Exchange: {pos:+.4f}, Initial: {initial_offset:+.4f})")
+                else:
+                    logger.info(f"  📍 {symbol}: {pos:+.4f}")
+
+            logger.info(f"✅ Fetched market data for {len(prices)} symbols")
 
             # 步骤3: 计算每个symbol的offset和决策
+            logger.info("="*50)
+            logger.info("🤔 DECISION ENGINE - EVALUATING ACTIONS")
+            logger.info("="*50)
+            logger.info(f"⚡ Thresholds: ${self.threshold_min:.2f} - ${self.threshold_max:.2f} (Step: ${self.threshold_step:.2f})")
+
             decisions = []
             for symbol, ideal_hedge in ideal_hedges.items():
                 try:
@@ -141,10 +180,38 @@ class HedgeBot:
                     if decision:
                         decisions.append(decision)
                 except Exception as e:
-                    logger.error(f"Error processing {symbol}: {e}")
+                    logger.error(f"❌ Error processing {symbol}: {e}")
                     await self.on_error(symbol=symbol, error=str(e))
 
+            # 显示决策结果汇总
+            logger.info("📋 DECISIONS:")
+            action_counts = {}
+            for decision in decisions:
+                action = decision.action
+                action_counts[action] = action_counts.get(action, 0) + 1
+
+                symbol = decision.metadata.get("symbol")
+                if action == "place_order":
+                    logger.info(f"  📝 {symbol}: PLACE LIMIT {decision.side.upper()} "
+                               f"{decision.size:.4f} @ ${decision.price:.2f} - {decision.reason}")
+                elif action == "market_order":
+                    logger.info(f"  🚨 {symbol}: PLACE MARKET {decision.side.upper()} "
+                               f"{decision.size:.4f} - {decision.reason}")
+                elif action == "cancel":
+                    logger.info(f"  ❌ {symbol}: CANCEL ORDER - {decision.reason}")
+                elif action == "alert":
+                    logger.info(f"  ⚠️  {symbol}: ALERT - {decision.reason}")
+                else:
+                    logger.debug(f"  ✅ {symbol}: NO ACTION - {decision.reason}")
+
+            logger.info(f"📊 Summary: {action_counts}")
+            logger.info(f"✅ Decided on {len(decisions)} actions")
+
             # 步骤4: 执行决策
+            logger.info("="*50)
+            logger.info("⚡ EXECUTING ACTIONS")
+            logger.info("="*50)
+
             results = []
             for decision in decisions:
                 if decision.action != "wait":
@@ -152,8 +219,31 @@ class HedgeBot:
                         result = await self._execute_decision(decision)
                         results.append(result)
                     except Exception as e:
-                        logger.error(f"Error executing {decision}: {e}")
+                        logger.error(f"❌ Error executing {decision}: {e}")
                         await self.on_error(decision=decision, error=str(e))
+
+            # 显示执行结果
+            if results:
+                logger.info("📊 EXECUTION RESULTS:")
+                success_count = sum(1 for r in results if r.get("success"))
+                failed_count = len(results) - success_count
+                for i, result in enumerate(results, 1):
+                    symbol = result.get("symbol")
+                    action = result.get("action")
+                    if result.get("success"):
+                        if "order_id" in result:
+                            logger.info(f"  ✅ [{i}] {symbol}: {action} - Order ID: {result['order_id']}")
+                        else:
+                            logger.info(f"  ✅ [{i}] {symbol}: {action} completed")
+                    else:
+                        logger.error(f"  ❌ [{i}] {symbol}: {action} failed - {result.get('error')}")
+
+                logger.info(f"📈 EXECUTION STATISTICS:")
+                logger.info(f"  • Total Actions: {len(results)}")
+                logger.info(f"  • Successful: {success_count}")
+                logger.info(f"  • Failed: {failed_count}")
+            else:
+                logger.info("✅ No actions to execute")
 
             # 步骤5: 生成摘要报告
             duration = (datetime.now() - start_time).total_seconds()
@@ -195,23 +285,42 @@ class HedgeBot:
         Returns:
             决策对象（如果需要操作）
         """
+        # 应用初始偏移
+        initial_offset = self.config.get("initial_offset", {}).get(symbol, 0.0)
+        adjusted_position = current_position + initial_offset
+
         # 计算offset和cost_basis
         offset, cost_basis = calculate_offset_and_cost(
             ideal=ideal_hedge,
-            actual=current_position,
+            actual=adjusted_position,
             price=current_price
         )
 
         # 应用预定义偏移（外部对冲调整）
         predefined_offset = self.config.get("predefined_offset", {}).get(symbol, 0.0)
+        raw_offset = offset
         if predefined_offset != 0.0:
-            raw_offset = offset
             offset = offset - predefined_offset
-            logger.info(f"{symbol} predefined offset applied: {raw_offset:+.4f} - {predefined_offset:+.4f} = {offset:+.4f}")
 
         offset_usd = abs(offset) * current_price
 
-        logger.debug(f"{symbol}: offset={offset:+.4f} (${offset_usd:.2f}), ideal={ideal_hedge:.4f}, actual={current_position:.4f}")
+        # 详细日志
+        logger.info(f"📊 {symbol}:")
+        logger.info(f"  ├─ Ideal Position: {ideal_hedge:+.4f}")
+        logger.info(f"  ├─ Actual Position: {adjusted_position:+.4f}")
+        if predefined_offset != 0.0:
+            logger.info(f"  ├─ Raw Offset: {raw_offset:+.4f} ({abs(raw_offset) * current_price:.2f} USD)")
+            logger.info(f"  ├─ Predefined Adjustment: {predefined_offset:+.4f}")
+        logger.info(f"  ├─ Final Offset: {offset:+.4f} ({offset_usd:.2f} USD)")
+        logger.info(f"  ├─ Cost Basis: ${cost_basis:.2f}")
+
+        # 显示偏移方向
+        if offset > 0:
+            logger.info(f"  └─ Status: 🔴 LONG exposure (Need to SELL {abs(offset):.4f})")
+        elif offset < 0:
+            logger.info(f"  └─ Status: 🟢 SHORT exposure (Need to BUY {abs(offset):.4f})")
+        else:
+            logger.info(f"  └─ Status: ✅ BALANCED")
 
         # 决策1: 检查阈值
         decision = decide_on_threshold_breach(offset_usd, self.threshold_max)
