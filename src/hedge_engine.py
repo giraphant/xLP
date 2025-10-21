@@ -13,7 +13,7 @@ from pathlib import Path
 
 # 导入本地模块
 from exchanges import create_exchange
-from notifications.apprise_notifier import Notifier
+from utils.notifier import Notifier
 from core.offset_tracker import calculate_offset_and_cost
 from core.state_manager import StateManager
 from core.exceptions import HedgeEngineError, InvalidConfigError
