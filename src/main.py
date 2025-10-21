@@ -13,7 +13,7 @@ import json
 import traceback
 from datetime import datetime
 from pathlib import Path
-from hedge_engine import HedgeEngine
+from engine_v2 import HedgeEngineV2
 from core.exceptions import (
     HedgeEngineError,
     RecoverableError,
@@ -62,8 +62,8 @@ class HedgeBot:
     async def initialize(self):
         """初始化引擎（可能失败）"""
         try:
-            self.engine = HedgeEngine(self.config_path)
-            self.logger.info("对冲引擎初始化成功")
+            self.engine = HedgeEngineV2(self.config_path)
+            self.logger.info("对冲引擎 V2 初始化成功")
             self.error_count = 0  # 重置错误计数
         except ConfigError as e:
             self.logger.critical(f"配置错误: {e}")
