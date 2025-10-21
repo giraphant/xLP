@@ -206,6 +206,11 @@ class HedgeBot:
         # 决策1: 检查阈值
         decision = decide_on_threshold_breach(offset_usd, self.threshold_max)
         if decision.action == "alert":
+            # 添加symbol和offset信息到metadata
+            decision.metadata = decision.metadata or {}
+            decision.metadata["symbol"] = symbol
+            decision.metadata["offset"] = offset
+            decision.metadata["offset_usd"] = offset_usd
             await self.on_decision(symbol=symbol, decision=decision)
             return decision
 
@@ -220,6 +225,11 @@ class HedgeBot:
             started_dt = datetime.fromisoformat(started_at) if isinstance(started_at, str) else started_at
             decision = decide_on_timeout(started_dt, self.timeout_minutes, offset, self.close_ratio)
             if decision:
+                # 添加symbol和offset信息到metadata
+                decision.metadata = decision.metadata or {}
+                decision.metadata["symbol"] = symbol
+                decision.metadata["offset"] = offset
+                decision.metadata["offset_usd"] = offset_usd
                 await self.on_decision(symbol=symbol, decision=decision)
                 return decision
 
