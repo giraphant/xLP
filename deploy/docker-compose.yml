@@ -2,14 +2,16 @@ version: '3.8'
 
 services:
   hedge-engine:
-    build: .
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
     container_name: xlp-hedge-engine
     restart: unless-stopped
 
     # 持久化存储
     volumes:
       # 指标导出持久化（可选）
-      - ./logs:/app/logs
+      - ../logs:/app/logs
 
     # 日志配置
     logging:

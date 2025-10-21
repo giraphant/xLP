@@ -52,8 +52,11 @@ xLP/
 │       └── exchange_helpers.py   # Stateless exchange functions
 │
 ├── tests/                        # Test suite (84 passed)
-├── Dockerfile                    # Container image
-├── docker-compose.yml            # One-command deployment
+├── deploy/                       # Deployment files
+│   ├── Dockerfile                # Container image
+│   ├── docker-compose.yml        # Service orchestration
+│   ├── .env.example              # Environment template
+│   └── README.md                 # Deployment guide
 └── config.json                   # Configuration (optional)
 ```
 
@@ -135,16 +138,19 @@ Positions tracked by symbol (SOL, ETH, BTC, BONK), not by pool. JLP and ALP posi
 # 1. Clone and configure
 git clone https://github.com/giraphant/xLP.git
 cd xLP
-cp .env.example .env
+cp deploy/.env.example .env
 nano .env  # Fill in your settings
 
 # 2. Start with one command
 mkdir -p logs
+cd deploy
 docker-compose up -d
 
 # 3. Monitor
 docker-compose logs -f
 ```
+
+See [deploy/README.md](deploy/README.md) for detailed deployment instructions.
 
 ### Configuration (Environment Variables)
 
