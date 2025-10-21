@@ -55,8 +55,6 @@ xLP/
 │   ├── Dockerfile               # Container image
 │   ├── .dockerignore            # Build exclusions
 │   ├── .env.example             # Environment template
-│   ├── config.json              # JSON config template (optional)
-│   ├── state_template.json      # State file template
 │   └── README.md                # Deployment guide
 │
 ├── tests/                        # Test suite

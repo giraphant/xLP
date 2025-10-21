@@ -60,8 +60,6 @@ python src/main.py
 - **docker-compose.yml** - Orchestration configuration (at project root)
 - **.dockerignore** - Build exclusions
 - **.env.example** - Environment variable template
-- **config.json** - JSON configuration template (legacy)
-- **state_template.json** - State file template
 
 ## Important Notes
 
