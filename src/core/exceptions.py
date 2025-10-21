@@ -35,13 +35,3 @@ class InvalidConfigError(ConfigError):
             f"Invalid config: {field}",
             {"field": field, "value": value, "expected": expected}
         )
-
-
-class CriticalError(HedgeEngineError):
-    """严重错误 - 需要停机"""
-    pass
-
-
-class RecoverableError(HedgeEngineError):
-    """可恢复错误 - 可重试"""
-    pass
