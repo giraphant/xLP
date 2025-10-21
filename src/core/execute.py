@@ -226,7 +226,10 @@ async def _execute_alert(
     """
     logger.warning(f"🚨 ALERT: {action.symbol} - {action.reason}")
 
-    await notifier.send_alert(
-        action.reason,
-        action.metadata.get("alert_type", "warning")
+    # 调用对应的 alert 方法
+    await notifier.alert_threshold_exceeded(
+        action.symbol,
+        action.metadata["offset_usd"],
+        action.metadata["offset"],
+        action.metadata["current_price"]
     )

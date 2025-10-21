@@ -257,6 +257,15 @@ class Notifier:
             priority=1
         )
 
+    async def alert_force_close(self, symbol: str, size: float, side: str):
+        """强制平仓通知"""
+        message = f"Force closed: {side.upper()} {size:.4f} {symbol} (timeout)"
+        await self.send(
+            message=message,
+            title=f"🚨 {symbol} Force Close",
+            priority=2
+        )
+
     async def alert_system_error(self, message: str):
         """系统错误通知"""
         await self.send(
