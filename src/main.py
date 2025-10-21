@@ -94,11 +94,6 @@ async def main():
         audit_log.log_error(**kw)
         metrics.record_error(**kw)
 
-    async def on_report_async(summary):
-        """包装同步回调 - hedge_bot已输出详细报告，这里只记录关键指标"""
-        # 不再打印扁平的字典，hedge_bot里已经有详细报告了
-        pass
-
     # 组装HedgeBot
     bot = HedgeBot(
         config=config_dict,
@@ -107,8 +102,8 @@ async def main():
         pool_fetcher=pool_fetcher,
         on_decision=on_decision_async,
         on_action=on_action_async,
-        on_error=on_error_async,
-        on_report=on_report_async
+        on_error=on_error_async
+        # on_report 不需要 - hedge_bot已有详细报告
     )
 
     # 运行对冲循环
