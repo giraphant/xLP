@@ -19,7 +19,7 @@ from core.report import generate_reports
 # 导入基础设施
 from exchanges import create_exchange
 from utils.notifier import Notifier
-from utils.state_manager import StateManager
+from utils.state import StateManager
 from core.exceptions import HedgeEngineError, InvalidConfigError
 from utils.config import HedgeConfig, ValidationError
 from utils.matsu import MatsuReporter

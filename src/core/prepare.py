@@ -13,7 +13,7 @@
 import logging
 import asyncio
 from typing import Dict, Any, Tuple
-from utils.offset_tracker import calculate_offset_and_cost
+from utils.offset import calculate_offset_and_cost
 
 logger = logging.getLogger(__name__)
 
