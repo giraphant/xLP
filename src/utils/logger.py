@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Structlog 配置 - 结构化日志系统
-增强标准 logging，支持 JSON 格式和上下文绑定
+日志系统配置
+使用 structlog 增强标准 logging，支持彩色输出、JSON 格式和日志轮转
 """
 
 import sys
@@ -145,71 +145,3 @@ def setup_structlog(
     )
 
     return logger
-
-
-def get_logger(name: str = None):
-    """
-    获取 Structlog logger
-
-    Args:
-        name: Logger 名称（可选）
-
-    Returns:
-        Structlog logger 实例
-
-    Example:
-        logger = get_logger(__name__)
-        logger.info("order_placed", symbol="SOL", quantity=10.5)
-    """
-    return structlog.get_logger(name)
-
-
-def bind_context(**kwargs):
-    """
-    绑定全局上下文
-
-    所有后续日志都会自动包含这些字段
-
-    Example:
-        bind_context(service="hedge_engine", version="2.0")
-        logger.info("started")  # 自动包含 service 和 version
-    """
-    logger = structlog.get_logger()
-    return logger.bind(**kwargs)
-
-
-# ==================== 便捷的日志函数 ====================
-
-def log_order(symbol: str, side: str, quantity: float, price: float, **extra):
-    """记录订单日志"""
-    logger = get_logger()
-    logger.info(
-        "order_event",
-        symbol=symbol,
-        side=side,
-        quantity=quantity,
-        price=price,
-        **extra
-    )
-
-
-def log_error(error_type: str, message: str, **extra):
-    """记录错误日志"""
-    logger = get_logger()
-    logger.error(
-        "error_event",
-        error_type=error_type,
-        message=message,
-        **extra
-    )
-
-
-def log_metric(metric_name: str, value: float, **labels):
-    """记录指标日志"""
-    logger = get_logger()
-    logger.debug(
-        "metric_event",
-        metric=metric_name,
-        value=value,
-        **labels
-    )

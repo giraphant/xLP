@@ -20,7 +20,7 @@ from core.exceptions import (
     CriticalError,
     ConfigError
 )
-from utils.structlog_config import setup_structlog
+from utils.logger import setup_structlog
 from tenacity import (
     AsyncRetrying,
     stop_after_attempt,
