@@ -39,6 +39,16 @@ class ExchangeInterface(ABC):
         pass
 
     @abstractmethod
+    async def get_positions(self) -> Dict[str, float]:
+        """
+        获取所有支持币种的持仓数量
+
+        Returns:
+            字典 {symbol: position_size}，只包含有持仓的币种
+        """
+        pass
+
+    @abstractmethod
     async def get_price(self, symbol: str) -> float:
         """
         获取当前市场价格
@@ -126,6 +136,10 @@ class MockExchange(ExchangeInterface):
 
     async def get_position(self, symbol: str) -> float:
         return self.positions.get(symbol, 0.0)
+
+    async def get_positions(self) -> Dict[str, float]:
+        """返回所有持仓"""
+        return {symbol: pos for symbol, pos in self.positions.items() if pos != 0.0}
 
     async def get_price(self, symbol: str) -> float:
         return self.prices.get(symbol, 100.0)
@@ -222,6 +236,19 @@ class LighterExchange(ExchangeInterface):
         lighter_symbol = self._get_market_id(symbol)
         position = await self.lighter_client.get_position(lighter_symbol)
         return position
+
+    async def get_positions(self) -> Dict[str, float]:
+        """获取所有支持币种的持仓"""
+        positions = {}
+        for symbol in self.SYMBOL_MAP.keys():
+            try:
+                pos = await self.get_position(symbol)
+                if pos != 0.0:
+                    positions[symbol] = pos
+            except Exception as e:
+                # 跳过获取失败的币种
+                continue
+        return positions
 
     async def get_price(self, symbol: str) -> float:
         """获取当前市场价格"""
