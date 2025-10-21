@@ -250,19 +250,20 @@ class Notifier:
 
     async def alert_threshold_exceeded(self, symbol: str, offset_usd: float, offset: float, current_price: float):
         """阈值超限通知"""
-        message = f"Offset ${abs(offset_usd):.2f} ({offset:+.4f} {symbol}) @ ${current_price:.2f}"
+        message = f"偏移 ${abs(offset_usd):.2f} ({offset:+.4f} {symbol}) @ ${current_price:.2f}"
         await self.send(
             message=message,
-            title=f"⚠️ {symbol} Threshold",
+            title=f"⚠️ {symbol} 超过阈值",
             priority=1
         )
 
     async def alert_force_close(self, symbol: str, size: float, side: str):
         """强制平仓通知"""
-        message = f"Force closed: {side.upper()} {size:.4f} {symbol} (timeout)"
+        side_cn = "卖出" if side.lower() == "sell" else "买入"
+        message = f"强制平仓: {side_cn} {size:.4f} {symbol} (超时未成交)"
         await self.send(
             message=message,
-            title=f"🚨 {symbol} Force Close",
+            title=f"🚨 {symbol} 强制平仓",
             priority=2
         )
 
