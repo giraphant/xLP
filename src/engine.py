@@ -22,7 +22,7 @@ from utils.notifier import Notifier
 from utils.state_manager import StateManager
 from core.exceptions import HedgeEngineError, InvalidConfigError
 from utils.config import HedgeConfig, ValidationError
-from utils.matsu_reporter import MatsuReporter
+from utils.matsu import MatsuReporter
 from pools import jlp, alp
 
 logger = logging.getLogger(__name__)
