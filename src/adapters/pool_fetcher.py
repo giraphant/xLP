@@ -68,8 +68,10 @@ class PoolFetcher:
                 hedges = await calculator(amount)
 
                 # 合并到总hedges中
-                for symbol, hedge_amount in hedges.items():
-                    all_hedges[symbol] = all_hedges.get(symbol, 0.0) + hedge_amount
+                for symbol, hedge_data in hedges.items():
+                    # 提取amount字段（池子返回的是嵌套结构）
+                    amount = hedge_data["amount"] if isinstance(hedge_data, dict) else hedge_data
+                    all_hedges[symbol] = all_hedges.get(symbol, 0.0) + amount
 
                 logger.info(f"✅ {pool_name}: {len(hedges)} symbols fetched")
 
