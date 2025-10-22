@@ -148,6 +148,38 @@ def _calculate_limit_price(offset: float, cost_basis: float, price_offset_percen
         return cost_basis * (1 - price_offset_percent / 100)
 
 
+def _create_limit_order_action(
+    symbol: str,
+    offset: float,
+    offset_usd: float,
+    cost_basis: float,
+    zone: int,
+    reason: str,
+    config: Dict[str, Any],
+    in_cooldown: bool = False
+) -> TradingAction:
+    """创建限价单操作（辅助函数，消除重复）"""
+    order_price = _calculate_limit_price(offset, cost_basis, config.get("order_price_offset", 0.2))
+    order_size = _calculate_close_size(offset, config.get("close_ratio", 40.0))
+    side = "sell" if offset > 0 else "buy"
+
+    return TradingAction(
+        type=ActionType.PLACE_LIMIT_ORDER,
+        symbol=symbol,
+        side=side,
+        size=order_size,
+        price=order_price,
+        reason=reason,
+        metadata={
+            "zone": zone,
+            "offset": offset,
+            "offset_usd": offset_usd,
+            "cost_basis": cost_basis,
+            "in_cooldown": in_cooldown
+        }
+    )
+
+
 def _decide_symbol_actions(
     symbol: str,
     offset: float,
@@ -171,9 +203,6 @@ def _decide_symbol_actions(
     current_zone = monitoring.get("current_zone")
     existing_order_id = monitoring.get("order_id")
     started_at = monitoring.get("started_at")
-
-    logger.debug(f"{symbol}: offset=${offset_usd:.2f}, zone={zone}, "
-                f"current_zone={current_zone}, monitoring={is_monitoring}")
 
     # ========== 决策1: 检查是否超过最高阈值 ==========
     if zone == -1:
@@ -276,24 +305,15 @@ def _decide_symbol_actions(
                     ))
 
                 # 挂新的限价单
-                order_price = _calculate_limit_price(offset, cost_basis, config.get("order_price_offset", 0.2))
-                order_size = _calculate_close_size(offset, config.get("close_ratio", 40.0))
-                side = "sell" if offset > 0 else "buy"
-
-                actions.append(TradingAction(
-                    type=ActionType.PLACE_LIMIT_ORDER,
+                actions.append(_create_limit_order_action(
                     symbol=symbol,
-                    side=side,
-                    size=order_size,
-                    price=order_price,
+                    offset=offset,
+                    offset_usd=offset_usd,
+                    cost_basis=cost_basis,
+                    zone=zone,
                     reason=f"Zone worsened to {zone} during cooldown",
-                    metadata={
-                        "zone": zone,
-                        "offset": offset,
-                        "offset_usd": offset_usd,
-                        "cost_basis": cost_basis,
-                        "in_cooldown": True
-                    }
+                    config=config,
+                    in_cooldown=True
                 ))
                 return actions
 
@@ -325,26 +345,17 @@ def _decide_symbol_actions(
             ))
         else:
             # 进入新区间，挂限价单
-            order_price = _calculate_limit_price(offset, cost_basis, config.get("order_price_offset", 0.2))
-            order_size = _calculate_close_size(offset, config.get("close_ratio", 40.0))
-            side = "sell" if offset > 0 else "buy"
-
-            logger.info(f"{symbol}: Placing {side} order for {order_size:.4f} @ ${order_price:.2f}")
-
-            actions.append(TradingAction(
-                type=ActionType.PLACE_LIMIT_ORDER,
+            action = _create_limit_order_action(
                 symbol=symbol,
-                side=side,
-                size=order_size,
-                price=order_price,
+                offset=offset,
+                offset_usd=offset_usd,
+                cost_basis=cost_basis,
+                zone=zone,
                 reason=f"Entered zone {zone}",
-                metadata={
-                    "zone": zone,
-                    "offset": offset,
-                    "offset_usd": offset_usd,
-                    "cost_basis": cost_basis
-                }
-            ))
+                config=config
+            )
+            logger.info(f"{symbol}: Placing {action.side} order for {action.size:.4f} @ ${action.price:.2f}")
+            actions.append(action)
 
     # ========== 决策4: 无变化 ==========
     if not actions:
