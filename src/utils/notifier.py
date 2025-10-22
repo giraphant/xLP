@@ -10,6 +10,10 @@ from apprise import Apprise, NotifyType
 
 logger = logging.getLogger(__name__)
 
+# 启用 Apprise 内部调试日志
+apprise_logger = logging.getLogger('apprise')
+apprise_logger.setLevel(logging.DEBUG)
+
 
 class Notifier:
     """
