@@ -10,10 +10,6 @@ from apprise import Apprise, NotifyType
 
 logger = logging.getLogger(__name__)
 
-# 启用 Apprise 内部调试日志
-apprise_logger = logging.getLogger('apprise')
-apprise_logger.setLevel(logging.DEBUG)
-
 
 class Notifier:
     """
@@ -63,8 +59,6 @@ class Notifier:
 
     def _load_services(self):
         """加载所有启用的通知服务"""
-        logger.info("=== Initializing Notifier Services ===")
-        logger.info(f"Config keys: {list(self.config.keys())}")
 
         # Pushover（config 直接就是 pushover 配置）
         pushover_config = self.config
@@ -75,18 +69,13 @@ class Notifier:
             if user_key and api_token:
                 # Apprise Pushover URL 格式: pover://user@token
                 url = f'pover://{user_key}@{api_token}'
-                logger.info(f"Adding Pushover service: user={user_key[:4]}...{user_key[-4:]}, token={api_token[:4]}...{api_token[-4:]}")
-                logger.info(f"Pushover URL format: pover://{user_key[:4]}***@{api_token[:4]}***")
-
-                result = self.apobj.add(url)  # 不加 tag，避免被 tag=None 过滤掉
-                logger.info(f"apobj.add() returned: {result}")
+                result = self.apobj.add(url)
 
                 if result:
                     self.enabled = True
                     logger.info("✅ Pushover notification enabled")
                 else:
-                    logger.error("❌ Failed to add Pushover service (invalid URL format?)")
-                    logger.error(f"URL that failed: pover://{user_key[:6]}...@{api_token[:6]}...")
+                    logger.error("❌ Failed to add Pushover service")
             else:
                 logger.warning("Pushover enabled but credentials not provided")
 
@@ -180,10 +169,6 @@ class Notifier:
         notify_type = self._priority_to_notify_type(priority)
 
         try:
-            logger.info(f"Sending notification: {title or message[:50]}")
-            logger.info(f"Apprise has {len(self.apobj)} service(s) configured")
-            logger.info(f"Notification params: priority={priority}, notify_type={notify_type}, tag={tag}")
-
             # 发送通知
             success = await self.apobj.async_notify(
                 title=title or 'Hedge Engine',
@@ -193,13 +178,9 @@ class Notifier:
             )
 
             if success:
-                logger.info(f"✅ Notification sent successfully: {title}")
+                logger.info(f"✅ Notification sent: {title}")
             else:
                 logger.error(f"❌ Notification failed: {title}")
-                logger.error(f"   Apprise returned False (check credentials or URL format)")
-                logger.error(f"   Services in apobj: {len(self.apobj)}")
-                logger.error(f"   Tag filter: {tag}")
-                logger.error(f"   Enabled state: {self.enabled}")
 
             return success
 
