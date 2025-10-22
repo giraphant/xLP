@@ -200,13 +200,13 @@ async def _execute_cancel_order(
     if success:
         logger.info(f"✅ Order canceled: {action.symbol} (ID: {action.order_id})")
 
-        # 清除监控状态（包括 current_zone，因为撤单不等于成交，没有冷却期）
+        # 清除监控状态（保留 current_zone 用于下一轮 zone 对比）
         await state_manager.update_symbol_state(action.symbol, {
             "monitoring": {
                 "active": False,
                 "started_at": None,
-                "order_id": None,
-                "current_zone": None
+                "order_id": None
+                # current_zone 保留，用于判断下一轮 zone 是否变化
             }
         })
     else:
