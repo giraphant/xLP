@@ -277,12 +277,12 @@ def _decide_symbol_actions(
 
             # 情况1: 回到阈值内 (Zone → None)
             if cooldown_status == "cancel_only":
-                if is_monitoring:
-                    actions.append(TradingAction(
-                        type=ActionType.CANCEL_ORDER,
-                        symbol=symbol,
-                        reason="Back within threshold during cooldown"
-                    ))
+                # 取消所有订单（不检查 is_monitoring，防止状态不一致）
+                actions.append(TradingAction(
+                    type=ActionType.CANCEL_ORDER,
+                    symbol=symbol,
+                    reason="Back within threshold during cooldown"
+                ))
                 actions.append(TradingAction(
                     type=ActionType.NO_ACTION,
                     symbol=symbol,
@@ -292,12 +292,12 @@ def _decide_symbol_actions(
 
             # 情况2: Zone恶化 (增大)
             elif cooldown_status == "re_order":
-                if is_monitoring:
-                    actions.append(TradingAction(
-                        type=ActionType.CANCEL_ORDER,
-                        symbol=symbol,
-                        reason=f"Zone worsened during cooldown: {current_zone} → {zone}"
-                    ))
+                # 取消所有订单（不检查 is_monitoring，防止状态不一致）
+                actions.append(TradingAction(
+                    type=ActionType.CANCEL_ORDER,
+                    symbol=symbol,
+                    reason=f"Zone worsened during cooldown: {current_zone} → {zone}"
+                ))
 
                 # 挂新的限价单
                 actions.append(_create_limit_order_action(
@@ -322,13 +322,12 @@ def _decide_symbol_actions(
                 return actions
 
         # 非冷却期：正常的区间变化处理
-        # 取消该币种的所有订单（防止遗漏）
-        if is_monitoring:
-            actions.append(TradingAction(
-                type=ActionType.CANCEL_ORDER,
-                symbol=symbol,
-                reason=f"Zone changed from {current_zone} to {zone}"
-            ))
+        # 取消该币种的所有订单（不检查 is_monitoring，防止状态不一致）
+        actions.append(TradingAction(
+            type=ActionType.CANCEL_ORDER,
+            symbol=symbol,
+            reason=f"Zone changed from {current_zone} to {zone}"
+        ))
 
         # 根据新区间决定操作
         if zone is None:
