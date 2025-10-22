@@ -121,7 +121,8 @@ class HedgeEngine:
                 actions,
                 self.exchange,
                 self.state_manager,
-                self.notifier
+                self.notifier,
+                data.get("state_updates")
             )
 
             # ========== 步骤 4: 报告 ==========

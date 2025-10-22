@@ -50,22 +50,36 @@ async def prepare_data(
 
     # 3. 获取市场数据
     symbols = list(ideal_hedges.keys())
-    positions, prices = await _fetch_market_data(exchange, symbols, config, state_manager)
+    positions, prices, position_updates = await _fetch_market_data(exchange, symbols, config, state_manager)
 
     # 4. 计算偏移和成本
-    offsets = await _calculate_offsets(
+    offsets, offset_updates = await _calculate_offsets(
         ideal_hedges,
         positions,
         prices,
         state_manager
     )
 
+    # 5. 合并状态更新（不在这里更新，而是传递给 execute）
+    state_updates = {}
+    for symbol in symbols:
+        state_updates[symbol] = {}
+
+        # 合并 position 相关更新
+        if symbol in position_updates:
+            state_updates[symbol].update(position_updates[symbol])
+
+        # 合并 offset 相关更新
+        if symbol in offset_updates:
+            state_updates[symbol].update(offset_updates[symbol])
+
     return {
         "symbols": symbols,
         "ideal_hedges": ideal_hedges,
         "positions": positions,
         "prices": prices,
-        "offsets": offsets
+        "offsets": offsets,
+        "state_updates": state_updates
     }
 
 
@@ -153,11 +167,17 @@ async def _fetch_market_data(
     symbols: list,
     config: Dict[str, Any],
     state_manager
-) -> Tuple[Dict[str, float], Dict[str, float]]:
+) -> Tuple[Dict[str, float], Dict[str, float], Dict[str, Dict[str, Any]]]:
     """
     并发获取市场数据（价格和持仓）
 
     依赖：exchanges/
+
+    Returns:
+        (positions, prices, position_updates)
+        - positions: 实际持仓（含初始偏移）
+        - prices: 当前价格
+        - position_updates: 需要更新的状态信息
     """
     logger.info("=" * 50)
     logger.info("💹 FETCHING MARKET DATA")
@@ -185,6 +205,7 @@ async def _fetch_market_data(
 
     # 处理持仓结果
     positions = {}
+    position_updates = {}
     initial_offset_config = config.get("initial_offset", {})
 
     logger.info("📊 ACTUAL POSITIONS (Exchange + Initial Offset):")
@@ -193,23 +214,19 @@ async def _fetch_market_data(
             logger.error(f"  ❌ {symbol}: Failed to get position - {position}")
             position = 0.0
 
-        # 检查交易所持仓是否变化（检测成交）
+        # 检查交易所持仓是否变化（只检测，不更新）
         state = state_manager.get_symbol_state(symbol)
         old_exchange_position = state.get("exchange_position", position)  # 首次默认为当前值
 
-        if position != old_exchange_position:
-            # 持仓变化 = 有成交发生 → 设置 last_fill_time
+        position_changed = (position != old_exchange_position)
+        if position_changed:
             logger.info(f"  🔄 {symbol}: Position changed {old_exchange_position:+.4f} → {position:+.4f} (fill detected)")
-            state_manager.update_symbol_state(symbol, {
-                "last_fill_time": datetime.now(),
-                "exchange_position": position
-                # 不清除 monitoring.started_at，让 execute 撤单后再清除
-            })
-        else:
-            # 没有变化，只更新记录
-            state_manager.update_symbol_state(symbol, {
-                "exchange_position": position
-            })
+
+        # 收集需要更新的状态（不立即更新）
+        position_updates[symbol] = {
+            "exchange_position": position,
+            "position_changed": position_changed
+        }
 
         # 加上初始偏移量
         initial_offset = initial_offset_config.get(symbol, 0.0)
@@ -223,7 +240,7 @@ async def _fetch_market_data(
             logger.info(f"  📍 {symbol}: {total_position:+.4f}")
 
     logger.info(f"✅ Fetched market data for {len(symbols)} symbols")
-    return positions, prices
+    return positions, prices, position_updates
 
 
 async def _calculate_offsets(
@@ -231,27 +248,30 @@ async def _calculate_offsets(
     positions: Dict[str, float],
     prices: Dict[str, float],
     state_manager
-) -> Dict[str, Tuple[float, float]]:
+) -> Tuple[Dict[str, Tuple[float, float]], Dict[str, Dict[str, Any]]]:
     """
-    计算偏移和成本（纯函数 + 状态更新）
+    计算偏移和成本（纯函数，不更新状态）
 
-    依赖：core/offset_tracker.py
+    依赖：utils/offset.py
 
     Returns:
-        {symbol: (offset, cost_basis)}
+        (offsets, offset_updates)
+        - offsets: {symbol: (offset, cost_basis)}
+        - offset_updates: 需要更新的状态信息
     """
     logger.info("=" * 50)
     logger.info("🧮 CALCULATING OFFSETS")
     logger.info("=" * 50)
 
     offsets = {}
+    offset_updates = {}
 
     for symbol in ideal_hedges:
         if symbol not in prices:
             logger.warning(f"  ⚠️  {symbol}: No price data, skipping")
             continue
 
-        # 获取旧状态
+        # 获取旧状态（只读）
         state = state_manager.get_symbol_state(symbol)
         old_offset = state.get("offset", 0.0)
         old_cost = state.get("cost_basis", 0.0)
@@ -267,11 +287,11 @@ async def _calculate_offsets(
 
         offsets[symbol] = (offset, cost)
 
-        # 更新状态
-        state_manager.update_symbol_state(symbol, {
+        # 收集需要更新的状态（不立即更新）
+        offset_updates[symbol] = {
             "offset": offset,
             "cost_basis": cost
-        })
+        }
 
         # 日志输出
         offset_usd = abs(offset) * prices[symbol]
@@ -279,4 +299,4 @@ async def _calculate_offsets(
         logger.info(f"  • {symbol}: {direction} offset={offset:+.4f} "
                    f"(${offset_usd:.2f}) cost=${cost:.2f}")
 
-    return offsets
+    return offsets, offset_updates

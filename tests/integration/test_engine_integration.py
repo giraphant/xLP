@@ -147,7 +147,8 @@ class TestEngineIntegration:
                 actions,
                 exchange,
                 state_manager,
-                AsyncMock()  # mock notifier
+                AsyncMock(),  # mock notifier
+                data.get("state_updates")
             )
 
             # 验证订单已下
@@ -185,7 +186,7 @@ class TestEngineIntegration:
         # === 第一次循环 ===
         data = await prepare_data(mock_config, pool_calculators, exchange, state_manager)
         actions = await decide_actions(data, state_manager, mock_config)
-        await execute_actions(actions, exchange, state_manager, AsyncMock())
+        await execute_actions(actions, exchange, state_manager, AsyncMock(), data.get("state_updates"))
 
         # 记录第一次的zone
         first_state = state_manager.get_symbol_state("SOL")
@@ -237,7 +238,7 @@ class TestEngineIntegration:
         # === 第一次循环：下限价单 ===
         data = await prepare_data(mock_config, pool_calculators, exchange, state_manager)
         actions = await decide_actions(data, state_manager, mock_config)
-        await execute_actions(actions, exchange, state_manager, AsyncMock())
+        await execute_actions(actions, exchange, state_manager, AsyncMock(), data.get("state_updates"))
 
         # === 手动设置started_at为25分钟前（超时），并设置current_zone ===
         state_manager.update_symbol_state("SOL", {
@@ -261,7 +262,7 @@ class TestEngineIntegration:
         assert market_action.metadata["force_close"] is True
 
         # 执行
-        await execute_actions(actions, exchange, state_manager, AsyncMock())
+        await execute_actions(actions, exchange, state_manager, AsyncMock(), data.get("state_updates"))
 
         # 验证市价单已成交
         market_orders = [o for o in exchange.orders.values()

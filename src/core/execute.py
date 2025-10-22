@@ -22,7 +22,8 @@ async def execute_actions(
     actions: List[TradingAction],
     exchange,
     state_manager,
-    notifier
+    notifier,
+    state_updates: Dict[str, Dict[str, Any]] = None
 ) -> List[Dict[str, Any]]:
     """
     执行所有操作
@@ -34,17 +35,47 @@ async def execute_actions(
         exchange: 交易所接口
         state_manager: 状态管理器
         notifier: 通知器
+        state_updates: prepare阶段计算的状态更新（统一在此更新）
 
     Returns:
         执行结果列表 [{"action": TradingAction, "success": bool, ...}, ...]
     """
-    if not actions:
-        logger.info("No actions to execute")
-        return []
-
     logger.info("=" * 50)
     logger.info("⚡ EXECUTING ACTIONS")
     logger.info("=" * 50)
+
+    # 第一步：更新所有 prepare 阶段计算的状态（统一在此处更新）
+    if state_updates:
+        logger.info("📝 Updating states from prepare phase:")
+        for symbol, updates in state_updates.items():
+            # 构建要更新的状态
+            symbol_state_update = {}
+
+            # 更新 offset 和 cost_basis
+            if "offset" in updates:
+                symbol_state_update["offset"] = updates["offset"]
+            if "cost_basis" in updates:
+                symbol_state_update["cost_basis"] = updates["cost_basis"]
+
+            # 更新 exchange_position
+            if "exchange_position" in updates:
+                symbol_state_update["exchange_position"] = updates["exchange_position"]
+
+            # 应用状态更新
+            if symbol_state_update:
+                state_manager.update_symbol_state(symbol, symbol_state_update)
+                logger.debug(f"  • {symbol}: {symbol_state_update}")
+
+            # 如果检测到持仓变化（成交），更新 last_fill_time
+            if updates.get("position_changed"):
+                state_manager.update_symbol_state(symbol, {
+                    "last_fill_time": datetime.now()
+                })
+                logger.info(f"  🔔 {symbol}: Fill detected, updated last_fill_time")
+
+    if not actions:
+        logger.info("No actions to execute")
+        return []
 
     results = []
 
