@@ -78,7 +78,7 @@ class Notifier:
                 logger.info(f"Adding Pushover service: user={user_key[:4]}...{user_key[-4:]}, token={api_token[:4]}...{api_token[-4:]}")
                 logger.info(f"Pushover URL format: pover://{user_key[:4]}***@{api_token[:4]}***")
 
-                result = self.apobj.add(url, tag='pushover')
+                result = self.apobj.add(url)  # 不加 tag，避免被 tag=None 过滤掉
                 logger.info(f"apobj.add() returned: {result}")
 
                 if result:
@@ -98,7 +98,7 @@ class Notifier:
 
             if bot_token and chat_id:
                 # Apprise Telegram URL 格式: tgram://bottoken/ChatID
-                self.apobj.add(f'tgram://{bot_token}/{chat_id}', tag='telegram')
+                self.apobj.add(f'tgram://{bot_token}/{chat_id}')
                 self.enabled = True
                 logger.info("Telegram notification enabled")
 
@@ -113,8 +113,7 @@ class Notifier:
             if username and password and to_email:
                 # Apprise Email URL 格式: mailto://user:password@server/?to=recipient
                 self.apobj.add(
-                    f'mailto://{username}:{password}@{smtp_server}?to={to_email}',
-                    tag='email'
+                    f'mailto://{username}:{password}@{smtp_server}?to={to_email}'
                 )
                 self.enabled = True
                 logger.info("Email notification enabled")
@@ -125,7 +124,7 @@ class Notifier:
             webhook_url = discord_config.get("webhook_url", "")
             if webhook_url:
                 # Discord webhook
-                self.apobj.add(webhook_url, tag='discord')
+                self.apobj.add(webhook_url)
                 self.enabled = True
                 logger.info("Discord notification enabled")
 
@@ -135,7 +134,7 @@ class Notifier:
             webhook_url = slack_config.get("webhook_url", "")
             if webhook_url:
                 # Slack webhook
-                self.apobj.add(webhook_url, tag='slack')
+                self.apobj.add(webhook_url)
                 self.enabled = True
                 logger.info("Slack notification enabled")
 
@@ -145,7 +144,7 @@ class Notifier:
             url = webhook_config.get("url", "")
             if url:
                 # Generic webhook: json://hostname/path
-                self.apobj.add(f'json://{url}', tag='webhook')
+                self.apobj.add(f'json://{url}')
                 self.enabled = True
                 logger.info("Custom webhook notification enabled")
 
