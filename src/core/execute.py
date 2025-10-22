@@ -123,10 +123,10 @@ async def _execute_limit_order(
     logger.info(f"✅ Limit order placed: {action.symbol} (ID: {order_id})")
 
     # 更新状态
-    await state_manager.update_symbol_state(action.symbol, {
+    state_manager.update_symbol_state(action.symbol, {
         "monitoring": {
             "current_zone": action.metadata.get("zone"),
-            "started_at": datetime.now().isoformat()
+            "started_at": datetime.now()
         }
     })
 
@@ -166,12 +166,12 @@ async def _execute_market_order(
         )
 
     # 清除监控状态 + 更新最后成交时间（用于冷却期）
-    await state_manager.update_symbol_state(action.symbol, {
+    state_manager.update_symbol_state(action.symbol, {
         "monitoring": {
             "started_at": None
             # current_zone 保留用于 cooldown 判断
         },
-        "last_fill_time": datetime.now().isoformat()
+        "last_fill_time": datetime.now()
     })
 
     return order_id
@@ -197,7 +197,7 @@ async def _execute_cancel_order(
         logger.info(f"✅ Canceled {canceled_count} order(s): {action.symbol}")
 
         # 清除监控状态（保留 current_zone 用于下一轮 zone 对比）
-        await state_manager.update_symbol_state(action.symbol, {
+        state_manager.update_symbol_state(action.symbol, {
             "monitoring": {
                 "started_at": None
                 # current_zone 保留，用于判断下一轮 zone 是否变化

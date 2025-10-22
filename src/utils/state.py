@@ -4,7 +4,6 @@
 纯内存模式，不持久化状态，每次重启全新评估
 """
 
-import asyncio
 import logging
 from datetime import datetime
 
@@ -17,7 +16,7 @@ class StateManager:
 
     特性：
     - 纯内存模式，不持久化（每次重启全新状态）
-    - 异步安全的状态更新（asyncio.Lock）
+    - 同步状态更新（asyncio单线程无需锁）
     - 深度合并更新，支持嵌套字典
 
     设计理念：
@@ -27,7 +26,6 @@ class StateManager:
 
     def __init__(self):
         """初始化内存状态管理器"""
-        self._lock = asyncio.Lock()
         self._state = self._get_default_state()
         logger.info("StateManager initialized (in-memory mode, no persistence)")
 
@@ -38,13 +36,11 @@ class StateManager:
             "last_check": None
         }
 
-
-    async def get_symbol_state(self, symbol: str) -> dict:
+    def get_symbol_state(self, symbol: str) -> dict:
         """获取单个币种状态"""
-        async with self._lock:
-            if symbol not in self._state.get("symbols", {}):
-                return self._get_default_symbol_state()
-            return self._state["symbols"][symbol].copy()
+        if symbol not in self._state.get("symbols", {}):
+            return self._get_default_symbol_state()
+        return self._state["symbols"][symbol].copy()
 
     def _get_default_symbol_state(self) -> dict:
         """获取默认币种状态"""
@@ -53,14 +49,12 @@ class StateManager:
             "cost_basis": 0.0,
             "last_updated": None,
             "monitoring": {
-                "active": False,
                 "started_at": None,
-                "current_zone": None,
-                "order_id": None
+                "current_zone": None
             }
         }
 
-    async def update_symbol_state(self, symbol: str, updates: dict):
+    def update_symbol_state(self, symbol: str, updates: dict):
         """
         原子更新单个币种状态
 
@@ -68,21 +62,20 @@ class StateManager:
             symbol: 币种符号
             updates: 要更新的字段
         """
-        async with self._lock:
-            # 确保symbols字典存在
-            if "symbols" not in self._state:
-                self._state["symbols"] = {}
+        # 确保symbols字典存在
+        if "symbols" not in self._state:
+            self._state["symbols"] = {}
 
-            # 确保币种存在
-            if symbol not in self._state["symbols"]:
-                self._state["symbols"][symbol] = self._get_default_symbol_state()
+        # 确保币种存在
+        if symbol not in self._state["symbols"]:
+            self._state["symbols"][symbol] = self._get_default_symbol_state()
 
-            # 深度合并更新
-            self._deep_merge(self._state["symbols"][symbol], updates)
+        # 深度合并更新
+        self._deep_merge(self._state["symbols"][symbol], updates)
 
-            # 更新时间戳
-            self._state["symbols"][symbol]["last_updated"] = datetime.now().isoformat()
-            logger.debug(f"Updated state for {symbol}: {updates}")
+        # 更新时间戳
+        self._state["symbols"][symbol]["last_updated"] = datetime.now()
+        logger.debug(f"Updated state for {symbol}: {updates}")
 
     def _deep_merge(self, target: dict, source: dict):
         """深度合并字典"""

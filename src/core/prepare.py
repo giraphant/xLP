@@ -194,20 +194,20 @@ async def _fetch_market_data(
             position = 0.0
 
         # 检查交易所持仓是否变化（检测成交）
-        state = await state_manager.get_symbol_state(symbol)
+        state = state_manager.get_symbol_state(symbol)
         old_exchange_position = state.get("exchange_position", position)  # 首次默认为当前值
 
         if position != old_exchange_position:
             # 持仓变化 = 有成交发生 → 设置 last_fill_time
             logger.info(f"  🔄 {symbol}: Position changed {old_exchange_position:+.4f} → {position:+.4f} (fill detected)")
-            await state_manager.update_symbol_state(symbol, {
-                "last_fill_time": datetime.now().isoformat(),
+            state_manager.update_symbol_state(symbol, {
+                "last_fill_time": datetime.now(),
                 "exchange_position": position
                 # 不清除 monitoring.started_at，让 execute 撤单后再清除
             })
         else:
             # 没有变化，只更新记录
-            await state_manager.update_symbol_state(symbol, {
+            state_manager.update_symbol_state(symbol, {
                 "exchange_position": position
             })
 
@@ -252,7 +252,7 @@ async def _calculate_offsets(
             continue
 
         # 获取旧状态
-        state = await state_manager.get_symbol_state(symbol)
+        state = state_manager.get_symbol_state(symbol)
         old_offset = state.get("offset", 0.0)
         old_cost = state.get("cost_basis", 0.0)
 
@@ -268,7 +268,7 @@ async def _calculate_offsets(
         offsets[symbol] = (offset, cost)
 
         # 更新状态
-        await state_manager.update_symbol_state(symbol, {
+        state_manager.update_symbol_state(symbol, {
             "offset": offset,
             "cost_basis": cost
         })

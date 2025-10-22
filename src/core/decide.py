@@ -87,7 +87,7 @@ async def decide_actions(
         )
 
         # 获取状态
-        state = await state_manager.get_symbol_state(symbol)
+        state = state_manager.get_symbol_state(symbol)
 
         # 调用核心决策函数
         actions = _decide_symbol_actions(
@@ -229,8 +229,7 @@ def _decide_symbol_actions(
 
     # ========== 决策2: 检查超时 ==========
     if started_at:
-        started_time = datetime.fromisoformat(started_at)
-        elapsed_minutes = (datetime.now() - started_time).total_seconds() / 60
+        elapsed_minutes = (datetime.now() - started_at).total_seconds() / 60
         timeout_minutes = config.get("timeout_minutes", 20)
 
         if elapsed_minutes >= timeout_minutes:
@@ -375,11 +374,10 @@ def _check_cooldown(
         - in_cooldown: 是否在冷却期
         - status: "normal" | "skip" | "cancel_only" | "re_order"
     """
-    last_fill_time_str = state.get("last_fill_time")
-    if not last_fill_time_str:
+    last_fill_time = state.get("last_fill_time")
+    if not last_fill_time:
         return False, "normal"
 
-    last_fill_time = datetime.fromisoformat(last_fill_time_str)
     elapsed = (datetime.now() - last_fill_time).total_seconds() / 60
     cooldown_minutes = config.get("cooldown_after_fill_minutes", 5)
 
