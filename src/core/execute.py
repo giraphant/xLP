@@ -222,20 +222,14 @@ async def _execute_alert(
     notifier
 ):
     """
-    发送警报（根据 alert_type 调用对应方法）
+    发送警报：超过最高阈值
     """
     logger.warning(f"🚨 ALERT: {action.symbol} - {action.reason}")
 
-    alert_type = action.metadata.get("alert_type", "warning")
-
-    # 根据 alert_type 调用对应的通知方法
-    if alert_type == "threshold_exceeded":
-        await notifier.alert_threshold_exceeded(
-            action.symbol,
-            action.metadata["offset_usd"],
-            action.metadata["offset"],
-            action.metadata["current_price"]
-        )
-    else:
-        # 通用警告
-        await notifier.alert_warning(action.symbol, action.reason)
+    # 当前只有一种警报：超过最高阈值
+    await notifier.alert_threshold_exceeded(
+        action.symbol,
+        action.metadata["offset_usd"],
+        action.metadata["offset"],
+        action.metadata["current_price"]
+    )
