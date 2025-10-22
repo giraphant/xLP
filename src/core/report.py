@@ -60,7 +60,7 @@ async def _generate_console_report(data: Dict[str, Any], state_manager):
         total_offset_usd += offset_usd
 
         # 获取状态
-        state = await state_manager.get_symbol_state(symbol)
+        state = state_manager.get_symbol_state(symbol)
         monitoring = state.get("monitoring", {})
 
         status = "🔴 LONG" if offset > 0 else ("🟢 SHORT" if offset < 0 else "✅ BALANCED")
