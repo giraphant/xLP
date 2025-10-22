@@ -10,6 +10,7 @@
 import logging
 import os
 from typing import Dict, Any, List, Optional
+from utils.config import HedgeConfig
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +19,7 @@ async def generate_reports(
     data: Dict[str, Any],
     results: List[Dict[str, Any]],
     state_manager,
-    config: Dict[str, Any],
+    config: HedgeConfig,
     matsu_reporter=None
 ):
     """

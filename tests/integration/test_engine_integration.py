@@ -19,44 +19,42 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from engine import HedgeEngine
 from exchanges.mock.exchange import MockExchange
 from utils.state import StateManager
+from utils.config import HedgeConfig
 from core.decide import ActionType
 
 
 @pytest.fixture
 def mock_config():
-    """模拟配置"""
-    return {
-        "jlp_amount": 100.0,
-        "alp_amount": 0.0,
-        "threshold_min_usd": 5.0,
-        "threshold_max_usd": 20.0,
-        "threshold_step_usd": 2.5,
-        "order_price_offset": 0.2,
-        "close_ratio": 40.0,
-        "timeout_minutes": 20,
-        "check_interval_seconds": 60,
-        "cooldown_after_fill_minutes": 5,
-        "initial_offset": {},
-        "rpc_url": "http://mock",
-        "exchange": {
-            "name": "mock",
-            "private_key": "",
-            "account_index": 0,
-            "api_key_index": 0,
-            "base_url": "http://mock"
-        },
-        "pushover": {
-            "enabled": False,
-            "user_key": "",
-            "api_token": ""
-        },
-        "matsu": {
-            "enabled": False,
-            "api_endpoint": "",
-            "auth_token": "",
-            "pool_name": ""
-        }
-    }
+    """模拟配置（HedgeConfig 对象）"""
+    return HedgeConfig(
+        jlp_amount=100.0,
+        alp_amount=0.0,
+        threshold_min_usd=5.0,
+        threshold_max_usd=20.0,
+        threshold_step_usd=2.5,
+        order_price_offset=0.2,
+        close_ratio=40.0,
+        timeout_minutes=20,
+        check_interval_seconds=60,
+        cooldown_after_fill_minutes=5,
+        initial_offset_sol=0.0,
+        initial_offset_eth=0.0,
+        initial_offset_btc=0.0,
+        initial_offset_bonk=0.0,
+        rpc_url="http://mock",
+        exchange_name="mock",
+        exchange_private_key="",
+        exchange_account_index=0,
+        exchange_api_key_index=0,
+        exchange_base_url="http://mock",
+        pushover_enabled=False,
+        pushover_user_key="",
+        pushover_api_token="",
+        matsu_enabled=False,
+        matsu_api_endpoint="",
+        matsu_auth_token="",
+        matsu_pool_name=""
+    )
 
 
 @pytest.fixture
@@ -86,7 +84,7 @@ class TestEngineIntegration:
         """
         # 创建组件
         state_manager = StateManager()
-        exchange = MockExchange(mock_config["exchange"])
+        exchange = MockExchange(mock_config.to_dict()["exchange"])
 
         # 设置价格（调低，避免超阈值）
         exchange.prices = {
@@ -170,7 +168,7 @@ class TestEngineIntegration:
         3. 第二次循环：撤单，重新下单
         """
         state_manager = StateManager()
-        exchange = MockExchange(mock_config["exchange"])
+        exchange = MockExchange(mock_config.to_dict()["exchange"])
         exchange.prices = {"SOL": 150.0}
 
         # 模拟池子（小数量）
@@ -223,7 +221,7 @@ class TestEngineIntegration:
         3. 触发超时逻辑，市价平仓
         """
         state_manager = StateManager()
-        exchange = MockExchange(mock_config["exchange"])
+        exchange = MockExchange(mock_config.to_dict()["exchange"])
         exchange.prices = {"SOL": 150.0}
 
         async def mock_jlp_calculator(amount):
@@ -280,7 +278,7 @@ class TestEngineIntegration:
         3. 冷却期内不重新下单
         """
         state_manager = StateManager()
-        exchange = MockExchange(mock_config["exchange"])
+        exchange = MockExchange(mock_config.to_dict()["exchange"])
         exchange.prices = {"SOL": 150.0}
 
         async def mock_jlp_calculator(amount):
@@ -324,7 +322,7 @@ class TestEngineIntegration:
         - 状态管理正确隔离
         """
         state_manager = StateManager()
-        exchange = MockExchange(mock_config["exchange"])
+        exchange = MockExchange(mock_config.to_dict()["exchange"])
         exchange.prices = {"SOL": 150.0, "BTC": 60000.0, "ETH": 3500.0}
 
         async def mock_jlp_calculator(amount):

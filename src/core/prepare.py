@@ -14,12 +14,13 @@ import asyncio
 from typing import Dict, Any, Tuple
 from datetime import datetime
 from utils.offset import calculate_offset_and_cost
+from utils.config import HedgeConfig
 
 logger = logging.getLogger(__name__)
 
 
 async def prepare_data(
-    config: Dict[str, Any],
+    config: HedgeConfig,
     pool_calculators: Dict[str, callable],
     exchange,
     state_manager
@@ -84,7 +85,7 @@ async def prepare_data(
 
 
 async def _fetch_pool_data(
-    config: Dict[str, Any],
+    config: HedgeConfig,
     pool_calculators: Dict[str, callable]
 ) -> Dict[str, Dict[str, Any]]:
     """
@@ -101,7 +102,7 @@ async def _fetch_pool_data(
     # 并发获取所有池子数据
     tasks = {}
     for pool_type, calculator in pool_calculators.items():
-        amount = config.get(f"{pool_type}_amount", 0)
+        amount = getattr(config, f"{pool_type}_amount", 0)
         if amount > 0:
             logger.info(f"🏊 {pool_type.upper()} Pool: Amount = {amount:,.2f}")
             tasks[pool_type] = calculator(amount)
@@ -165,7 +166,7 @@ def _calculate_ideal_hedges(pool_data: Dict[str, Dict[str, Any]]) -> Dict[str, f
 async def _fetch_market_data(
     exchange,
     symbols: list,
-    config: Dict[str, Any],
+    config: HedgeConfig,
     state_manager
 ) -> Tuple[Dict[str, float], Dict[str, float], Dict[str, Dict[str, Any]]]:
     """
@@ -206,7 +207,7 @@ async def _fetch_market_data(
     # 处理持仓结果
     positions = {}
     position_updates = {}
-    initial_offset_config = config.get("initial_offset", {})
+    initial_offset_config = config.get_initial_offset()
 
     logger.info("📊 ACTUAL POSITIONS (Exchange + Initial Offset):")
     for symbol, position in zip(position_tasks.keys(), positions_results):

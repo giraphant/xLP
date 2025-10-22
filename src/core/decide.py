@@ -14,6 +14,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
 from enum import Enum
 from datetime import datetime
+from utils.config import HedgeConfig
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,7 @@ class TradingAction:
 async def decide_actions(
     data: Dict[str, Any],
     state_manager,
-    config: Dict[str, Any]
+    config: HedgeConfig
 ) -> List[TradingAction]:
     """
     批量决策所有币种
@@ -81,9 +82,9 @@ async def decide_actions(
         # 计算区间
         zone = _calculate_zone(
             offset_usd,
-            config["threshold_min_usd"],
-            config["threshold_max_usd"],
-            config["threshold_step_usd"]
+            config.threshold_min_usd,
+            config.threshold_max_usd,
+            config.threshold_step_usd
         )
 
         # 获取状态
@@ -154,12 +155,12 @@ def _create_limit_order_action(
     cost_basis: float,
     zone: int,
     reason: str,
-    config: Dict[str, Any],
+    config: HedgeConfig,
     in_cooldown: bool = False
 ) -> TradingAction:
     """创建限价单操作（辅助函数，消除重复）"""
-    order_price = _calculate_limit_price(offset, cost_basis, config.get("order_price_offset", 0.2))
-    order_size = _calculate_close_size(offset, config.get("close_ratio", 40.0))
+    order_price = _calculate_limit_price(offset, cost_basis, config.order_price_offset)
+    order_size = _calculate_close_size(offset, config.close_ratio)
     side = "sell" if offset > 0 else "buy"
 
     return TradingAction(
@@ -230,7 +231,7 @@ def _decide_symbol_actions(
     # ========== 决策2: 检查超时 ==========
     if started_at:
         elapsed_minutes = (datetime.now() - started_at).total_seconds() / 60
-        timeout_minutes = config.get("timeout_minutes", 20)
+        timeout_minutes = config.timeout_minutes
 
         if elapsed_minutes >= timeout_minutes:
             logger.warning(f"{symbol}: Order timeout after {elapsed_minutes:.1f} minutes")
@@ -243,7 +244,7 @@ def _decide_symbol_actions(
             ))
 
             # 市价平仓（使用配置的平仓比例）
-            close_ratio = config.get("close_ratio", 40.0)
+            close_ratio = config.close_ratio
             order_size = _calculate_close_size(offset, close_ratio)
             side = "sell" if offset > 0 else "buy"
 
@@ -364,7 +365,7 @@ def _check_cooldown(
     state: Dict[str, Any],
     current_zone: Optional[int],
     new_zone: Optional[int],
-    config: Dict[str, Any]
+    config: HedgeConfig
 ) -> Tuple[bool, str]:
     """
     检查冷却期并分析状态（内部函数）
@@ -379,7 +380,7 @@ def _check_cooldown(
         return False, "normal"
 
     elapsed = (datetime.now() - last_fill_time).total_seconds() / 60
-    cooldown_minutes = config.get("cooldown_after_fill_minutes", 5)
+    cooldown_minutes = config.cooldown_after_fill_minutes
 
     if elapsed >= cooldown_minutes:
         return False, "normal"

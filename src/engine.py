@@ -43,17 +43,17 @@ class HedgeEngine:
         """初始化引擎（配置从环境变量读取）"""
         # 加载配置
         try:
-            config = HedgeConfig()
-            logger.info(config.get_summary())
-            self.config = config.to_dict()
+            self.config = HedgeConfig()
+            logger.info(self.config.get_summary())
         except ValidationError as e:
             logger.critical(f"Configuration validation failed: {e}")
             raise InvalidConfigError("config", str(e), "Valid configuration required")
 
-        # 初始化组件
+        # 初始化组件（exchange/notifier 需要 dict 格式）
+        config_dict = self.config.to_dict()
         self.state_manager = StateManager()
-        self.exchange = create_exchange(self.config["exchange"])
-        self.notifier = Notifier(self.config["pushover"])
+        self.exchange = create_exchange(config_dict["exchange"])
+        self.notifier = Notifier(config_dict["pushover"])
 
         # 初始化Matsu监控上报器（可选）
         self.matsu_reporter = self._initialize_matsu_reporter()
@@ -66,24 +66,21 @@ class HedgeEngine:
 
     def _initialize_matsu_reporter(self):
         """初始化Matsu监控上报器（可选）"""
-        matsu_config = self.config.get("matsu", {})
-
-        if not matsu_config.get("enabled", False):
+        if not self.config.matsu_enabled:
             logger.debug("Matsu reporter disabled")
             return None
 
-        auth_token = matsu_config.get("auth_token", "")
-        if not auth_token:
+        if not self.config.matsu_auth_token:
             logger.warning("Matsu reporter enabled but auth_token is empty")
             return None
 
         try:
             reporter = MatsuReporter(
-                api_url=matsu_config["api_endpoint"],
-                auth_token=matsu_config["auth_token"],
-                pool_name=matsu_config["pool_name"]
+                api_url=self.config.matsu_api_endpoint,
+                auth_token=self.config.matsu_auth_token,
+                pool_name=self.config.matsu_pool_name
             )
-            logger.info(f"✅ Matsu reporter enabled: {matsu_config['pool_name']}")
+            logger.info(f"✅ Matsu reporter enabled: {self.config.matsu_pool_name}")
             return reporter
         except Exception as e:
             logger.error(f"Failed to initialize Matsu reporter: {e}")
