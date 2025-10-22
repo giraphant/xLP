@@ -59,6 +59,8 @@ class Notifier:
 
     def _load_services(self):
         """加载所有启用的通知服务"""
+        logger.info("=== Initializing Notifier Services ===")
+        logger.info(f"Config keys: {list(self.config.keys())}")
 
         # Pushover（config 直接就是 pushover 配置）
         pushover_config = self.config
@@ -70,13 +72,17 @@ class Notifier:
                 # Apprise Pushover URL 格式: pover://user@token
                 url = f'pover://{user_key}@{api_token}'
                 logger.info(f"Adding Pushover service: user={user_key[:4]}...{user_key[-4:]}, token={api_token[:4]}...{api_token[-4:]}")
+                logger.info(f"Pushover URL format: pover://{user_key[:4]}***@{api_token[:4]}***")
 
                 result = self.apobj.add(url, tag='pushover')
+                logger.info(f"apobj.add() returned: {result}")
+
                 if result:
                     self.enabled = True
                     logger.info("✅ Pushover notification enabled")
                 else:
                     logger.error("❌ Failed to add Pushover service (invalid URL format?)")
+                    logger.error(f"URL that failed: pover://{user_key[:6]}...@{api_token[:6]}...")
             else:
                 logger.warning("Pushover enabled but credentials not provided")
 
@@ -172,7 +178,8 @@ class Notifier:
 
         try:
             logger.info(f"Sending notification: {title or message[:50]}")
-            logger.debug(f"Apprise has {len(self.apobj)} service(s) configured")
+            logger.info(f"Apprise has {len(self.apobj)} service(s) configured")
+            logger.info(f"Notification params: priority={priority}, notify_type={notify_type}, tag={tag}")
 
             # 发送通知
             success = await self.apobj.async_notify(
@@ -187,6 +194,9 @@ class Notifier:
             else:
                 logger.error(f"❌ Notification failed: {title}")
                 logger.error(f"   Apprise returned False (check credentials or URL format)")
+                logger.error(f"   Services in apobj: {len(self.apobj)}")
+                logger.error(f"   Tag filter: {tag}")
+                logger.error(f"   Enabled state: {self.enabled}")
 
             return success
 
