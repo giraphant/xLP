@@ -104,8 +104,7 @@ async def _fetch_pool_data(
             # 详细显示每个池子的持仓
             logger.info(f"  └─ Positions in {pool_type.upper()}:")
             for symbol, data in result.items():
-                amount_value = data["amount"] if isinstance(data, dict) else data
-                logger.info(f"     • {symbol}: {amount_value:,.4f}")
+                logger.info(f"     • {symbol}: {data['amount']:,.4f}")
 
     logger.info(f"✅ Fetched data from {len(pool_data)} pools")
     return pool_data
@@ -117,7 +116,6 @@ def _calculate_ideal_hedges(pool_data: Dict[str, Dict[str, Any]]) -> Dict[str, f
 
     策略：
     - 合并 JLP 和 ALP 池子的持仓
-    - 符号规范化（WBTC → BTC）
     - 对冲方向为负（做空对冲多头敞口）
     """
     logger.info("=" * 50)
@@ -133,11 +131,8 @@ def _calculate_ideal_hedges(pool_data: Dict[str, Dict[str, Any]]) -> Dict[str, f
             if symbol not in merged_hedges:
                 merged_hedges[symbol] = 0
 
-            # 提取数量
-            amount = data["amount"] if isinstance(data, dict) else data
-
             # 对冲方向为负（做空）
-            hedge_amount = -amount
+            hedge_amount = -data["amount"]
 
             # 累加
             merged_hedges[symbol] += hedge_amount
