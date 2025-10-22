@@ -46,7 +46,7 @@ async def main():
         return
 
     # 主循环参数
-    interval = engine.config["check_interval_seconds"]
+    interval = engine.config.check_interval_seconds
     error_count = 0
     max_errors = 10
 
