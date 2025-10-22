@@ -82,6 +82,7 @@ async def execute_actions(
 
             # 无操作
             elif action.type == ActionType.NO_ACTION:
+                logger.debug(f"⏭️  No action: {action.symbol} - {action.reason}")
                 result["success"] = True
 
             results.append(result)
@@ -166,18 +167,14 @@ async def _execute_market_order(
             action.side
         )
 
-    # 清除监控状态
+    # 清除监控状态 + 更新最后成交时间（用于冷却期）
     await state_manager.update_symbol_state(action.symbol, {
         "monitoring": {
             "active": False,
             "started_at": None,
             "order_id": None
             # current_zone 保留用于 cooldown 判断
-        }
-    })
-
-    # 更新最后成交时间（用于冷却期）
-    await state_manager.update_symbol_state(action.symbol, {
+        },
         "last_fill_time": datetime.now().isoformat()
     })
 
@@ -203,12 +200,13 @@ async def _execute_cancel_order(
     if success:
         logger.info(f"✅ Order canceled: {action.symbol} (ID: {action.order_id})")
 
-        # 清除监控状态
+        # 清除监控状态（包括 current_zone，因为撤单不等于成交，没有冷却期）
         await state_manager.update_symbol_state(action.symbol, {
             "monitoring": {
                 "active": False,
                 "started_at": None,
-                "order_id": None
+                "order_id": None,
+                "current_zone": None
             }
         })
     else:
