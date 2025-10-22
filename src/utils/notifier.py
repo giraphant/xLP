@@ -267,8 +267,8 @@ class Notifier:
         message = f"强制平仓: {side_cn} {size:.4f} {symbol} (超时未成交)"
         await self.send(
             message=message,
-            title=f"🚨 {symbol} 强制平仓",
-            priority=2
+            title=f"⏱️ {symbol} 强制平仓",
+            priority=0
         )
 
     async def alert_system_error(self, message: str):
