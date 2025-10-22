@@ -67,8 +67,8 @@ class Notifier:
             api_token = pushover_config.get("api_token", "")
 
             if user_key and api_token:
-                # Apprise Pushover URL 格式: pover://user@token
-                url = f'pover://{user_key}@{api_token}'
+                # Apprise Pushover URL 格式: pover://user@token?priority=high
+                url = f'pover://{user_key}@{api_token}?priority=high'
                 result = self.apobj.add(url)
 
                 if result:
