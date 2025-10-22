@@ -202,12 +202,8 @@ async def _fetch_market_data(
             logger.info(f"  🔄 {symbol}: Position changed {old_exchange_position:+.4f} → {position:+.4f} (fill detected)")
             await state_manager.update_symbol_state(symbol, {
                 "last_fill_time": datetime.now().isoformat(),
-                "exchange_position": position,
-                "monitoring": {
-                    "active": False,
-                    "started_at": None
-                    # current_zone 保留用于下一轮 zone 对比
-                }
+                "exchange_position": position
+                # 不清除 monitoring.started_at，让 execute 撤单后再清除
             })
         else:
             # 没有变化，只更新记录

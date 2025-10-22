@@ -198,7 +198,6 @@ def _decide_symbol_actions(
 
     # 获取状态信息
     monitoring = state.get("monitoring", {})
-    is_monitoring = monitoring.get("active", False)
     current_zone = monitoring.get("current_zone")
     started_at = monitoring.get("started_at")
 
@@ -206,8 +205,8 @@ def _decide_symbol_actions(
     if zone == -1:
         logger.warning(f"{symbol}: Exceeded max threshold ${offset_usd:.2f}")
 
-        # 取消该币种的所有订单
-        if is_monitoring:
+        # 取消该币种的所有订单（如果有的话）
+        if started_at:
             actions.append(TradingAction(
                 type=ActionType.CANCEL_ORDER,
                 symbol=symbol,
@@ -229,7 +228,7 @@ def _decide_symbol_actions(
         return actions
 
     # ========== 决策2: 检查超时 ==========
-    if is_monitoring and started_at:
+    if started_at:
         started_time = datetime.fromisoformat(started_at)
         elapsed_minutes = (datetime.now() - started_time).total_seconds() / 60
         timeout_minutes = config.get("timeout_minutes", 20)

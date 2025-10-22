@@ -125,7 +125,6 @@ async def _execute_limit_order(
     # 更新状态
     await state_manager.update_symbol_state(action.symbol, {
         "monitoring": {
-            "active": True,
             "current_zone": action.metadata.get("zone"),
             "started_at": datetime.now().isoformat()
         }
@@ -169,7 +168,6 @@ async def _execute_market_order(
     # 清除监控状态 + 更新最后成交时间（用于冷却期）
     await state_manager.update_symbol_state(action.symbol, {
         "monitoring": {
-            "active": False,
             "started_at": None
             # current_zone 保留用于 cooldown 判断
         },
@@ -201,7 +199,6 @@ async def _execute_cancel_order(
         # 清除监控状态（保留 current_zone 用于下一轮 zone 对比）
         await state_manager.update_symbol_state(action.symbol, {
             "monitoring": {
-                "active": False,
                 "started_at": None
                 # current_zone 保留，用于判断下一轮 zone 是否变化
             }
