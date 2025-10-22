@@ -12,6 +12,7 @@
 import logging
 import asyncio
 from typing import Dict, Any, Tuple
+from datetime import datetime
 from utils.offset import calculate_offset_and_cost
 
 logger = logging.getLogger(__name__)
@@ -49,7 +50,7 @@ async def prepare_data(
 
     # 3. 获取市场数据
     symbols = list(ideal_hedges.keys())
-    positions, prices = await _fetch_market_data(exchange, symbols, config)
+    positions, prices = await _fetch_market_data(exchange, symbols, config, state_manager)
 
     # 4. 计算偏移和成本
     offsets = await _calculate_offsets(
@@ -150,7 +151,8 @@ def _calculate_ideal_hedges(pool_data: Dict[str, Dict[str, Any]]) -> Dict[str, f
 async def _fetch_market_data(
     exchange,
     symbols: list,
-    config: Dict[str, Any]
+    config: Dict[str, Any],
+    state_manager
 ) -> Tuple[Dict[str, float], Dict[str, float]]:
     """
     并发获取市场数据（价格和持仓）
@@ -190,6 +192,29 @@ async def _fetch_market_data(
         if isinstance(position, Exception):
             logger.error(f"  ❌ {symbol}: Failed to get position - {position}")
             position = 0.0
+
+        # 检查交易所持仓是否变化（检测成交）
+        state = await state_manager.get_symbol_state(symbol)
+        old_exchange_position = state.get("exchange_position", position)  # 首次默认为当前值
+
+        if position != old_exchange_position:
+            # 持仓变化 = 有成交发生 → 设置 last_fill_time
+            logger.info(f"  🔄 {symbol}: Position changed {old_exchange_position:+.4f} → {position:+.4f} (fill detected)")
+            await state_manager.update_symbol_state(symbol, {
+                "last_fill_time": datetime.now().isoformat(),
+                "exchange_position": position,
+                "monitoring": {
+                    "active": False,
+                    "started_at": None,
+                    "order_id": None
+                    # current_zone 保留用于下一轮 zone 对比
+                }
+            })
+        else:
+            # 没有变化，只更新记录
+            await state_manager.update_symbol_state(symbol, {
+                "exchange_position": position
+            })
 
         # 加上初始偏移量
         initial_offset = initial_offset_config.get(symbol, 0.0)
