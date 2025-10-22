@@ -327,7 +327,8 @@ def _decide_symbol_actions(
                 return actions
 
         # 非冷却期：正常的区间变化处理
-        if is_monitoring and existing_order_id:
+        # 只要有 order_id 就撤单（不管 monitoring 状态，防止状态不一致）
+        if existing_order_id:
             actions.append(TradingAction(
                 type=ActionType.CANCEL_ORDER,
                 symbol=symbol,
