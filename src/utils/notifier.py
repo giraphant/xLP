@@ -258,7 +258,7 @@ class Notifier:
         await self.send(
             message=message,
             title=f"⚠️ {symbol} 超过阈值",
-            priority=1
+            priority=2
         )
 
     async def alert_force_close(self, symbol: str, size: float, side: str):
