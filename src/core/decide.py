@@ -35,7 +35,6 @@ class TradingAction:
     side: Optional[str] = None  # buy/sell
     size: Optional[float] = None
     price: Optional[float] = None
-    order_id: Optional[str] = None
     reason: str = ""
     metadata: Dict[str, Any] = None
 
@@ -201,18 +200,17 @@ def _decide_symbol_actions(
     monitoring = state.get("monitoring", {})
     is_monitoring = monitoring.get("active", False)
     current_zone = monitoring.get("current_zone")
-    existing_order_id = monitoring.get("order_id")
     started_at = monitoring.get("started_at")
 
     # ========== 决策1: 检查是否超过最高阈值 ==========
     if zone == -1:
         logger.warning(f"{symbol}: Exceeded max threshold ${offset_usd:.2f}")
 
-        if existing_order_id:
+        # 取消该币种的所有订单
+        if is_monitoring:
             actions.append(TradingAction(
                 type=ActionType.CANCEL_ORDER,
                 symbol=symbol,
-                order_id=existing_order_id,
                 reason="Exceeded max threshold"
             ))
 
@@ -239,13 +237,12 @@ def _decide_symbol_actions(
         if elapsed_minutes >= timeout_minutes:
             logger.warning(f"{symbol}: Order timeout after {elapsed_minutes:.1f} minutes")
 
-            if existing_order_id:
-                actions.append(TradingAction(
-                    type=ActionType.CANCEL_ORDER,
-                    symbol=symbol,
-                    order_id=existing_order_id,
-                    reason=f"Timeout after {elapsed_minutes:.1f} minutes"
-                ))
+            # 取消该币种的所有订单
+            actions.append(TradingAction(
+                type=ActionType.CANCEL_ORDER,
+                symbol=symbol,
+                reason=f"Timeout after {elapsed_minutes:.1f} minutes"
+            ))
 
             # 市价平仓（使用配置的平仓比例）
             close_ratio = config.get("close_ratio", 40.0)
@@ -280,11 +277,10 @@ def _decide_symbol_actions(
 
             # 情况1: 回到阈值内 (Zone → None)
             if cooldown_status == "cancel_only":
-                if existing_order_id:
+                if is_monitoring:
                     actions.append(TradingAction(
                         type=ActionType.CANCEL_ORDER,
                         symbol=symbol,
-                        order_id=existing_order_id,
                         reason="Back within threshold during cooldown"
                     ))
                 actions.append(TradingAction(
@@ -296,11 +292,10 @@ def _decide_symbol_actions(
 
             # 情况2: Zone恶化 (增大)
             elif cooldown_status == "re_order":
-                if existing_order_id:
+                if is_monitoring:
                     actions.append(TradingAction(
                         type=ActionType.CANCEL_ORDER,
                         symbol=symbol,
-                        order_id=existing_order_id,
                         reason=f"Zone worsened during cooldown: {current_zone} → {zone}"
                     ))
 
@@ -327,12 +322,11 @@ def _decide_symbol_actions(
                 return actions
 
         # 非冷却期：正常的区间变化处理
-        # 只要有 order_id 就撤单（不管 monitoring 状态，防止状态不一致）
-        if existing_order_id:
+        # 取消该币种的所有订单（防止遗漏）
+        if is_monitoring:
             actions.append(TradingAction(
                 type=ActionType.CANCEL_ORDER,
                 symbol=symbol,
-                order_id=existing_order_id,
                 reason=f"Zone changed from {current_zone} to {zone}"
             ))
 

@@ -81,3 +81,13 @@ class MockExchange(ExchangeInterface):
             print(f"  [MockExchange] 已撤单: {order_id}")
             return True
         return False
+
+    async def cancel_all_orders(self, symbol: str) -> int:
+        """取消该币种的所有活跃订单"""
+        canceled_count = 0
+        for order_id, order in list(self.orders.items()):
+            if order["symbol"] == symbol and order["status"] == "open":
+                order["status"] = "canceled"
+                canceled_count += 1
+                print(f"  [MockExchange] 已撤单: {order_id}")
+        return canceled_count

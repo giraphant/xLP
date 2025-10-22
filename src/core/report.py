@@ -70,7 +70,7 @@ async def _generate_console_report(data: Dict[str, Any], state_manager):
         logger.info(f"    • Cost: ${cost_basis:.2f}")
 
         if monitoring.get("active"):
-            logger.info(f"    • Order: {monitoring.get('order_id')} (zone {monitoring.get('current_zone')})")
+            logger.info(f"    • Monitoring: zone {monitoring.get('current_zone')}")
 
     logger.info(f"  📊 Total Exposure: ${total_offset_usd:.2f}")
 

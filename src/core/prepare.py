@@ -205,8 +205,7 @@ async def _fetch_market_data(
                 "exchange_position": position,
                 "monitoring": {
                     "active": False,
-                    "started_at": None,
-                    "order_id": None
+                    "started_at": None
                     # current_zone 保留用于下一轮 zone 对比
                 }
             })

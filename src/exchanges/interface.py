@@ -104,3 +104,16 @@ class ExchangeInterface(ABC):
             是否成功
         """
         pass
+
+    @abstractmethod
+    async def cancel_all_orders(self, symbol: str) -> int:
+        """
+        取消该币种的所有活跃订单
+
+        Args:
+            symbol: 币种符号
+
+        Returns:
+            取消的订单数量
+        """
+        pass

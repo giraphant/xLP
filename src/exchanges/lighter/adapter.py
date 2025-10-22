@@ -105,3 +105,26 @@ class LighterExchange(ExchangeInterface):
             del self.order_map[order_id]
 
         return success
+
+    async def cancel_all_orders(self, symbol: str) -> int:
+        """取消该币种的所有活跃订单"""
+        lighter_symbol = self._get_market_id(symbol)
+
+        # 找出该 symbol 的所有订单
+        orders_to_cancel = [
+            order_id for order_id, (sym, _) in self.order_map.items()
+            if sym == symbol
+        ]
+
+        canceled_count = 0
+        for order_id in orders_to_cancel:
+            try:
+                success = await self.lighter_client.cancel_order(lighter_symbol, order_id)
+                if success:
+                    del self.order_map[order_id]
+                    canceled_count += 1
+            except Exception as e:
+                # 继续取消其他订单
+                print(f"Failed to cancel order {order_id}: {e}")
+
+        return canceled_count

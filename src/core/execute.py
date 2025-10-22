@@ -127,7 +127,6 @@ async def _execute_limit_order(
         "monitoring": {
             "active": True,
             "current_zone": action.metadata.get("zone"),
-            "order_id": order_id,
             "started_at": datetime.now().isoformat()
         }
     })
@@ -171,8 +170,7 @@ async def _execute_market_order(
     await state_manager.update_symbol_state(action.symbol, {
         "monitoring": {
             "active": False,
-            "started_at": None,
-            "order_id": None
+            "started_at": None
             # current_zone 保留用于 cooldown 判断
         },
         "last_fill_time": datetime.now().isoformat()
@@ -187,32 +185,31 @@ async def _execute_cancel_order(
     state_manager
 ) -> bool:
     """
-    撤销订单
+    撤销订单（取消该币种所有活跃订单）
 
     Returns:
         是否成功
     """
-    logger.info(f"🚫 Canceling order: {action.symbol} (ID: {action.order_id})")
+    logger.info(f"🚫 Canceling all orders: {action.symbol}")
 
-    # 撤单
-    success = await exchange.cancel_order(action.order_id)
+    # 取消该币种的所有订单
+    canceled_count = await exchange.cancel_all_orders(action.symbol)
 
-    if success:
-        logger.info(f"✅ Order canceled: {action.symbol} (ID: {action.order_id})")
+    if canceled_count > 0:
+        logger.info(f"✅ Canceled {canceled_count} order(s): {action.symbol}")
 
         # 清除监控状态（保留 current_zone 用于下一轮 zone 对比）
         await state_manager.update_symbol_state(action.symbol, {
             "monitoring": {
                 "active": False,
-                "started_at": None,
-                "order_id": None
+                "started_at": None
                 # current_zone 保留，用于判断下一轮 zone 是否变化
             }
         })
+        return True
     else:
-        logger.warning(f"⚠️  Failed to cancel order: {action.symbol} (ID: {action.order_id})")
-
-    return success
+        logger.warning(f"⚠️  No orders to cancel: {action.symbol}")
+        return False
 
 
 async def _execute_alert(
