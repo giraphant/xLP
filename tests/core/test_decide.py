@@ -17,7 +17,6 @@ import pytest
 from datetime import datetime, timedelta
 from core.decide import (
     _calculate_zone,
-    _check_cooldown,
     _decide_symbol_actions,
     ActionType
 )
@@ -104,69 +103,107 @@ class TestZoneCalculation:
 
 
 class TestCooldownLogic:
-    """测试冷却期逻辑"""
+    """测试冷却期逻辑（通过决策函数测试）"""
 
-    def test_no_last_fill_time(self, mock_config):
-        """没有成交记录 → 不在冷却期"""
-        state = {}
-        in_cooldown, status = _check_cooldown(state, None, None, mock_config)
-        assert in_cooldown is False
-        assert status == "normal"
-
-    def test_cooldown_expired(self, mock_config):
-        """冷却期已过 → 不在冷却期"""
+    def test_cooldown_no_order(self, mock_config):
+        """冷却期内，无订单 → NO_ACTION（等待冷却）"""
         state = {
-            "last_fill_time": datetime.now() - timedelta(minutes=10)
+            "monitoring": {
+                "started_at": None,  # 无订单
+                "current_zone": 1
+            },
+            "last_fill_time": datetime.now() - timedelta(minutes=2)  # 冷却期内
         }
 
-        in_cooldown, status = _check_cooldown(state, None, None, mock_config)
-        assert in_cooldown is False
-        assert status == "normal"
-
-    def test_in_cooldown_back_to_threshold(self, mock_config):
-        """冷却期内，回到阈值内 → cancel_only"""
-        state = {
-            "last_fill_time": datetime.now() - timedelta(minutes=2)
-        }
-
-        in_cooldown, status = _check_cooldown(
-            state,
-            current_zone=1,
-            new_zone=None,  # 回到阈值内
+        actions = _decide_symbol_actions(
+            symbol="SOL",
+            offset=1.0,
+            cost_basis=150.0,
+            current_price=150.0,
+            offset_usd=150.0,
+            zone=1,  # 有敞口
+            state=state,
             config=mock_config
         )
-        assert in_cooldown is True
-        assert status == "cancel_only"
 
-    def test_in_cooldown_zone_worsened(self, mock_config):
-        """冷却期内，zone恶化 → re_order"""
+        assert len(actions) == 1
+        assert actions[0].type == ActionType.NO_ACTION
+        assert "cooldown" in actions[0].reason.lower()
+
+    def test_cooldown_zone_worsened_with_order(self, mock_config):
+        """冷却期内，有订单，zone恶化 → CANCEL_ORDER + PLACE_LIMIT_ORDER"""
         state = {
-            "last_fill_time": datetime.now() - timedelta(minutes=2)
+            "monitoring": {
+                "started_at": datetime.now() - timedelta(minutes=3),  # 有订单
+                "current_zone": 1
+            },
+            "last_fill_time": datetime.now() - timedelta(minutes=2)  # 冷却期内
         }
 
-        in_cooldown, status = _check_cooldown(
-            state,
-            current_zone=1,
-            new_zone=2,  # 恶化
+        actions = _decide_symbol_actions(
+            symbol="SOL",
+            offset=2.0,
+            cost_basis=150.0,
+            current_price=150.0,
+            offset_usd=300.0,
+            zone=2,  # Zone恶化（1→2）
+            state=state,
             config=mock_config
         )
-        assert in_cooldown is True
-        assert status == "re_order"
 
-    def test_in_cooldown_zone_improved(self, mock_config):
-        """冷却期内，zone改善 → skip"""
+        assert len(actions) == 2
+        assert actions[0].type == ActionType.CANCEL_ORDER
+        assert actions[1].type == ActionType.PLACE_LIMIT_ORDER
+        assert actions[1].metadata.get("in_cooldown") is True
+
+    def test_cooldown_zone_improved_with_order(self, mock_config):
+        """冷却期内，有订单，zone改善 → NO_ACTION（保持订单）"""
         state = {
-            "last_fill_time": datetime.now() - timedelta(minutes=2)
+            "monitoring": {
+                "started_at": datetime.now() - timedelta(minutes=3),  # 有订单
+                "current_zone": 2
+            },
+            "last_fill_time": datetime.now() - timedelta(minutes=2)  # 冷却期内
         }
 
-        in_cooldown, status = _check_cooldown(
-            state,
-            current_zone=2,
-            new_zone=1,  # 改善
+        actions = _decide_symbol_actions(
+            symbol="SOL",
+            offset=1.0,
+            cost_basis=150.0,
+            current_price=150.0,
+            offset_usd=150.0,
+            zone=1,  # Zone改善（2→1）
+            state=state,
             config=mock_config
         )
-        assert in_cooldown is True
-        assert status == "skip"
+
+        assert len(actions) == 1
+        assert actions[0].type == ActionType.NO_ACTION
+        assert "cooldown" in actions[0].reason.lower()
+
+    def test_non_cooldown_no_order(self, mock_config):
+        """非冷却期，无订单 → PLACE_LIMIT_ORDER"""
+        state = {
+            "monitoring": {
+                "started_at": None,  # 无订单
+                "current_zone": None
+            },
+            "last_fill_time": datetime.now() - timedelta(minutes=10)  # 冷却期已过
+        }
+
+        actions = _decide_symbol_actions(
+            symbol="SOL",
+            offset=1.0,
+            cost_basis=150.0,
+            current_price=150.0,
+            offset_usd=150.0,
+            zone=1,  # 有敞口
+            state=state,
+            config=mock_config
+        )
+
+        assert len(actions) == 1
+        assert actions[0].type == ActionType.PLACE_LIMIT_ORDER
 
 
 class TestDecisionLogic:
@@ -174,6 +211,57 @@ class TestDecisionLogic:
 
     def setup_method(self):
         """每个测试前的设置"""
+
+    def test_zone_unchanged_but_has_exposure(self, mock_config):
+        """关键测试：zone不变但有敞口，仍会评估和管理订单"""
+        # 场景1：冷却期内，zone不变，有订单 → 保持订单
+        state = {
+            "monitoring": {
+                "started_at": datetime.now() - timedelta(minutes=3),  # 有订单
+                "current_zone": 1
+            },
+            "last_fill_time": datetime.now() - timedelta(minutes=2)  # 冷却期内
+        }
+
+        actions = _decide_symbol_actions(
+            symbol="SOL",
+            offset=1.0,
+            cost_basis=150.0,
+            current_price=150.0,
+            offset_usd=150.0,
+            zone=1,  # Zone 不变，但有敞口
+            state=state,
+            config=mock_config
+        )
+
+        # 冷却期内保持订单
+        assert len(actions) == 1
+        assert actions[0].type == ActionType.NO_ACTION
+        assert "cooldown" in actions[0].reason.lower()
+
+        # 场景2：非冷却期，zone不变，无订单 → 挂新单
+        state = {
+            "monitoring": {
+                "started_at": None,  # 无订单
+                "current_zone": 1
+            },
+            "last_fill_time": datetime.now() - timedelta(minutes=10)  # 已过冷却期
+        }
+
+        actions = _decide_symbol_actions(
+            symbol="SOL",
+            offset=1.0,
+            cost_basis=150.0,
+            current_price=150.0,
+            offset_usd=150.0,
+            zone=1,  # Zone 不变，但有敞口
+            state=state,
+            config=mock_config
+        )
+
+        # 应该挂新单
+        assert len(actions) == 1
+        assert actions[0].type == ActionType.PLACE_LIMIT_ORDER
 
     def test_threshold_exceeded(self, mock_config):
         """超过最大阈值 → ALERT + CANCEL_ORDER"""
@@ -225,10 +313,10 @@ class TestDecisionLogic:
         assert actions[1].metadata["force_close"] is True
 
     def test_enter_new_zone(self, mock_config):
-        """进入新zone → CANCEL_ORDER + PLACE_LIMIT_ORDER"""
+        """进入新zone（无活跃订单） → PLACE_LIMIT_ORDER"""
         state = {
             "monitoring": {
-                "started_at": None,
+                "started_at": None,  # 无活跃订单
                 "current_zone": None
             }
         }
@@ -244,17 +332,16 @@ class TestDecisionLogic:
             config=mock_config
         )
 
-        # 应该有CANCEL_ORDER（清理旧订单）+ PLACE_LIMIT_ORDER
-        assert len(actions) == 2
-        assert actions[0].type == ActionType.CANCEL_ORDER
-        assert actions[1].type == ActionType.PLACE_LIMIT_ORDER
-        assert actions[1].metadata["zone"] == 1
+        # 无活跃订单，只需要 PLACE_LIMIT_ORDER
+        assert len(actions) == 1
+        assert actions[0].type == ActionType.PLACE_LIMIT_ORDER
+        assert actions[0].metadata["zone"] == 1
 
     def test_back_within_threshold(self, mock_config):
-        """回到阈值内 → CANCEL_ORDER + NO_ACTION"""
+        """回到阈值内（有活跃订单） → CANCEL_ORDER"""
         state = {
             "monitoring": {
-                "started_at": datetime.now(),
+                "started_at": datetime.now(),  # 有活跃订单
                 "current_zone": 1
             }
         }
@@ -265,22 +352,24 @@ class TestDecisionLogic:
             cost_basis=150.0,
             current_price=150.0,
             offset_usd=3.0,  # 低于5.0
-            zone=None,
+            zone=None,  # 回到安全区
             state=state,
             config=mock_config
         )
 
-        assert len(actions) == 2
+        # 决策4：有订单，回到安全区，只需取消订单
+        assert len(actions) == 1
         assert actions[0].type == ActionType.CANCEL_ORDER
-        assert actions[1].type == ActionType.NO_ACTION
+        assert "threshold" in actions[0].reason.lower()
 
-    def test_no_zone_change(self, mock_config):
-        """Zone没有变化 → NO_ACTION"""
+    def test_unexpected_state_recovery(self, mock_config):
+        """非冷却期但有订单（异常状态） → CANCEL_ORDER + PLACE_LIMIT_ORDER"""
         state = {
             "monitoring": {
-                "started_at": datetime.now() - timedelta(minutes=5),
+                "started_at": datetime.now() - timedelta(minutes=5),  # 有活跃订单
                 "current_zone": 1
             }
+            # 无 last_fill_time 或已过冷却期
         }
 
         actions = _decide_symbol_actions(
@@ -288,14 +377,18 @@ class TestDecisionLogic:
             offset=1.0,
             cost_basis=150.0,
             current_price=150.0,
-            offset_usd=8.0,  # 仍然是Zone 1
+            offset_usd=8.0,  # Zone 1
             zone=1,
             state=state,
             config=mock_config
         )
 
-        assert len(actions) == 1
-        assert actions[0].type == ActionType.NO_ACTION
+        # 异常状态恢复：取消旧订单，挂新订单
+        assert len(actions) == 2
+        assert actions[0].type == ActionType.CANCEL_ORDER
+        assert actions[0].reason == "Unexpected state cleanup"
+        assert actions[1].type == ActionType.PLACE_LIMIT_ORDER
+        assert "unexpected" in actions[1].reason.lower()
 
     def test_cooldown_zone_worsened(self, mock_config):
         """冷却期内zone恶化 → CANCEL_ORDER + PLACE_LIMIT_ORDER (in_cooldown=True)"""
@@ -331,7 +424,7 @@ class TestLimitOrderCalculation:
         """多头敞口 → 卖出订单，挂高价"""
         state = {
             "monitoring": {
-                "started_at": None,
+                "started_at": None,  # 无活跃订单
                 "current_zone": None
             }
         }
@@ -347,7 +440,10 @@ class TestLimitOrderCalculation:
             config=mock_config
         )
 
-        limit_order = next(a for a in actions if a.type == ActionType.PLACE_LIMIT_ORDER)
+        # 只有一个 PLACE_LIMIT_ORDER
+        assert len(actions) == 1
+        limit_order = actions[0]
+        assert limit_order.type == ActionType.PLACE_LIMIT_ORDER
         assert limit_order.side == "sell"
         assert limit_order.price == 100.0 * 1.002  # cost_basis * (1 + 0.2%)
         assert limit_order.size == 1.0 * 0.4  # offset * 40%
@@ -356,7 +452,7 @@ class TestLimitOrderCalculation:
         """空头敞口 → 买入订单，挂低价"""
         state = {
             "monitoring": {
-                "started_at": None,
+                "started_at": None,  # 无活跃订单
                 "current_zone": None
             }
         }
@@ -372,7 +468,10 @@ class TestLimitOrderCalculation:
             config=mock_config
         )
 
-        limit_order = next(a for a in actions if a.type == ActionType.PLACE_LIMIT_ORDER)
+        # 只有一个 PLACE_LIMIT_ORDER
+        assert len(actions) == 1
+        limit_order = actions[0]
+        assert limit_order.type == ActionType.PLACE_LIMIT_ORDER
         assert limit_order.side == "buy"
         assert limit_order.price == 100.0 * 0.998  # cost_basis * (1 - 0.2%)
         assert limit_order.size == 1.0 * 0.4  # abs(offset) * 40%

@@ -10,7 +10,7 @@
 - 区间变化处理
 """
 import logging
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 from enum import Enum
 from datetime import datetime
@@ -191,9 +191,13 @@ def _decide_symbol_actions(
     config: Dict[str, Any]
 ) -> List[TradingAction]:
     """
-    单个币种的核心决策函数
+    优化后的决策函数 - 更清晰的状态机
 
-    包含完整的决策状态机
+    状态机：
+    1. 超阈值 → 警报退出
+    2. 超时 → 强制平仓
+    3. 有敞口(zone is not None) → 订单管理
+    4. 无敞口(zone is None) → 清理状态
     """
     actions = []
 
@@ -201,13 +205,17 @@ def _decide_symbol_actions(
     monitoring = state.get("monitoring", {})
     current_zone = monitoring.get("current_zone")
     started_at = monitoring.get("started_at")
+    has_active_order = started_at is not None
 
-    # ========== 决策1: 检查是否超过最高阈值 ==========
+    # 记录状态转换
+    if zone != current_zone:
+        logger.info(f"{symbol}: Zone transition: {current_zone} → {zone} (${offset_usd:.2f})")
+
+    # ========== 决策1: 超阈值检查 ==========
     if zone == -1:
-        logger.warning(f"{symbol}: Exceeded max threshold ${offset_usd:.2f}")
+        logger.warning(f"{symbol}: ⚠️ Exceeded max threshold ${offset_usd:.2f}")
 
-        # 取消该币种的所有订单（如果有的话）
-        if started_at:
+        if has_active_order:
             actions.append(TradingAction(
                 type=ActionType.CANCEL_ORDER,
                 symbol=symbol,
@@ -225,27 +233,23 @@ def _decide_symbol_actions(
                 "current_price": current_price
             }
         ))
-
         return actions
 
-    # ========== 决策2: 检查超时 ==========
-    if started_at:
+    # ========== 决策2: 超时检查 ==========
+    if has_active_order:
         elapsed_minutes = (datetime.now() - started_at).total_seconds() / 60
-        timeout_minutes = config.timeout_minutes
+        if elapsed_minutes >= config.timeout_minutes:
+            logger.warning(f"{symbol}: ⏰ Order timeout after {elapsed_minutes:.1f} minutes")
 
-        if elapsed_minutes >= timeout_minutes:
-            logger.warning(f"{symbol}: Order timeout after {elapsed_minutes:.1f} minutes")
-
-            # 取消该币种的所有订单
+            # 取消订单
             actions.append(TradingAction(
                 type=ActionType.CANCEL_ORDER,
                 symbol=symbol,
                 reason=f"Timeout after {elapsed_minutes:.1f} minutes"
             ))
 
-            # 市价平仓（使用配置的平仓比例）
-            close_ratio = config.close_ratio
-            order_size = _calculate_close_size(offset, close_ratio)
+            # 市价平仓
+            order_size = _calculate_close_size(offset, config.close_ratio)
             side = "sell" if offset > 0 else "buy"
 
             actions.append(TradingAction(
@@ -261,143 +265,110 @@ def _decide_symbol_actions(
                     "cost_basis": cost_basis
                 }
             ))
-
             return actions
 
-    # ========== 决策3: 区间变化处理 ==========
-    if zone != current_zone:
-        logger.info(f"{symbol}: Zone changed from {current_zone} to {zone}")
+    # ========== 决策3: 有敞口 - 管理订单 ==========
+    if zone is not None:
+        # 检查冷却期（简化版）
+        last_fill_time = state.get("last_fill_time")
+        in_cooldown = False
+        cooldown_remaining = 0
 
-        # 检查冷却期
-        in_cooldown, cooldown_status = _check_cooldown(state, current_zone, zone, config)
+        if last_fill_time:
+            elapsed = (datetime.now() - last_fill_time).total_seconds() / 60
+            in_cooldown = elapsed < config.cooldown_after_fill_minutes
+            if in_cooldown:
+                cooldown_remaining = config.cooldown_after_fill_minutes - elapsed
+                logger.debug(f"{symbol}: In cooldown ({elapsed:.1f}/{config.cooldown_after_fill_minutes} min)")
 
+        # 冷却期逻辑
         if in_cooldown:
-            logger.info(f"{symbol}: In cooldown - {cooldown_status}")
-
-            # 情况1: 回到阈值内 (Zone → None)
-            if cooldown_status == "cancel_only":
-                # 取消所有订单（不检查 is_monitoring，防止状态不一致）
-                actions.append(TradingAction(
-                    type=ActionType.CANCEL_ORDER,
-                    symbol=symbol,
-                    reason="Back within threshold during cooldown"
-                ))
-                actions.append(TradingAction(
+            if not has_active_order:
+                # 刚成交，等待冷却
+                logger.info(f"{symbol}: 🧊 Cooling down after fill ({cooldown_remaining:.1f} min remaining)")
+                return [TradingAction(
                     type=ActionType.NO_ACTION,
                     symbol=symbol,
-                    reason="Within threshold during cooldown"
-                ))
-                return actions
+                    reason=f"Waiting in cooldown period ({cooldown_remaining:.1f} min remaining)",
+                    metadata={"in_cooldown": True, "cooldown_remaining": cooldown_remaining}
+                )]
 
-            # 情况2: Zone恶化 (增大)
-            elif cooldown_status == "re_order":
-                # 取消所有订单（不检查 is_monitoring，防止状态不一致）
+            # 有订单，检查是否需要调整
+            if current_zone is not None and zone > current_zone:
+                # Zone恶化，需要重新挂单
+                logger.info(f"{symbol}: 📈 Zone worsened during cooldown: {current_zone} → {zone}")
                 actions.append(TradingAction(
                     type=ActionType.CANCEL_ORDER,
                     symbol=symbol,
-                    reason=f"Zone worsened during cooldown: {current_zone} → {zone}"
+                    reason=f"Zone worsened: {current_zone} → {zone}"
                 ))
-
-                # 挂新的限价单
                 actions.append(_create_limit_order_action(
-                    symbol=symbol,
-                    offset=offset,
-                    offset_usd=offset_usd,
-                    cost_basis=cost_basis,
-                    zone=zone,
-                    reason=f"Zone worsened to {zone} during cooldown",
-                    config=config,
+                    symbol, offset, offset_usd, cost_basis, zone,
+                    f"Re-order due to zone worsening during cooldown", config,
                     in_cooldown=True
                 ))
                 return actions
-
-            # 情况3: Zone改善 (减小) - 等待观察
-            elif cooldown_status == "skip":
-                actions.append(TradingAction(
+            else:
+                # Zone改善或不变，保持现状
+                logger.debug(f"{symbol}: Maintaining order during cooldown (zone: {zone})")
+                return [TradingAction(
                     type=ActionType.NO_ACTION,
                     symbol=symbol,
-                    reason=f"Zone improved during cooldown, waiting for natural regression"
+                    reason=f"Maintaining order in cooldown (zone: {zone})",
+                    metadata={"in_cooldown": True, "zone": zone}
+                )]
+
+        # 非冷却期逻辑
+        else:
+            if not has_active_order:
+                # 需要挂新单
+                logger.info(f"{symbol}: 📍 Entering zone {zone}, placing order")
+                action = _create_limit_order_action(
+                    symbol, offset, offset_usd, cost_basis, zone,
+                    f"Entering zone {zone}", config
+                )
+                logger.info(f"{symbol}: Placing {action.side} order for {action.size:.4f} @ ${action.price:.2f}")
+                return [action]
+            else:
+                # 这种情况理论上不该出现（非冷却期+有订单）
+                logger.error(f"{symbol}: ❌ Unexpected state: not in cooldown but has order")
+                actions.append(TradingAction(
+                    type=ActionType.CANCEL_ORDER,
+                    symbol=symbol,
+                    reason="Unexpected state cleanup"
+                ))
+                actions.append(_create_limit_order_action(
+                    symbol, offset, offset_usd, cost_basis, zone,
+                    f"Recovery from unexpected state", config
                 ))
                 return actions
 
-        # 非冷却期：正常的区间变化处理
-        # 取消该币种的所有订单（不检查 is_monitoring，防止状态不一致）
-        actions.append(TradingAction(
-            type=ActionType.CANCEL_ORDER,
-            symbol=symbol,
-            reason=f"Zone changed from {current_zone} to {zone}"
-        ))
-
-        # 根据新区间决定操作
-        if zone is None:
-            logger.info(f"{symbol}: Back within threshold, no action needed")
-            actions.append(TradingAction(
+    # ========== 决策4: 无敞口 - 清理状态 ==========
+    if zone is None:
+        if has_active_order:
+            # 回到安全区，取消订单
+            logger.info(f"{symbol}: ✅ Back to safe zone, canceling order")
+            return [TradingAction(
+                type=ActionType.CANCEL_ORDER,
+                symbol=symbol,
+                reason="Back within threshold"
+            )]
+        else:
+            # 本来就在安全区
+            logger.debug(f"{symbol}: Within threshold, no action needed")
+            return [TradingAction(
                 type=ActionType.NO_ACTION,
                 symbol=symbol,
                 reason="Within threshold"
-            ))
-        else:
-            # 进入新区间，挂限价单
-            action = _create_limit_order_action(
-                symbol=symbol,
-                offset=offset,
-                offset_usd=offset_usd,
-                cost_basis=cost_basis,
-                zone=zone,
-                reason=f"Entered zone {zone}",
-                config=config
-            )
-            logger.info(f"{symbol}: Placing {action.side} order for {action.size:.4f} @ ${action.price:.2f}")
-            actions.append(action)
+            )]
 
-    # ========== 决策4: 无变化 ==========
-    if not actions:
-        actions.append(TradingAction(
-            type=ActionType.NO_ACTION,
-            symbol=symbol,
-            reason=f"No change needed (zone={zone})"
-        ))
-
-    return actions
+    # 不应该到达这里
+    logger.error(f"{symbol}: Reached unexpected end of decision tree")
+    return [TradingAction(
+        type=ActionType.NO_ACTION,
+        symbol=symbol,
+        reason="Unexpected decision tree end"
+    )]
 
 
-def _check_cooldown(
-    state: Dict[str, Any],
-    current_zone: Optional[int],
-    new_zone: Optional[int],
-    config: HedgeConfig
-) -> Tuple[bool, str]:
-    """
-    检查冷却期并分析状态（内部函数）
-
-    Returns:
-        (in_cooldown, status)
-        - in_cooldown: 是否在冷却期
-        - status: "normal" | "skip" | "cancel_only" | "re_order"
-    """
-    last_fill_time = state.get("last_fill_time")
-    if not last_fill_time:
-        return False, "normal"
-
-    elapsed = (datetime.now() - last_fill_time).total_seconds() / 60
-    cooldown_minutes = config.cooldown_after_fill_minutes
-
-    if elapsed >= cooldown_minutes:
-        return False, "normal"
-
-    # 在冷却期内，分析状态
-    remaining = cooldown_minutes - elapsed
-
-    # 回到阈值内
-    if new_zone is None:
-        return True, "cancel_only"
-
-    # Zone恶化（增大）
-    if current_zone is not None and new_zone is not None and new_zone > current_zone:
-        return True, "re_order"
-
-    # Zone改善（减小）
-    if current_zone is not None and new_zone is not None and new_zone < current_zone:
-        return True, "skip"
-
-    return True, "normal"
+# _check_cooldown 函数已被移除 - 冷却期逻辑已内联到 _decide_symbol_actions 中
