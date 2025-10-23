@@ -8,11 +8,9 @@
 - 市价单执行
 - 撤单
 - 警报
-- 状态更新
 """
 import logging
 from typing import List, Dict, Any
-from datetime import datetime
 from .decide import TradingAction, ActionType
 
 logger = logging.getLogger(__name__)
