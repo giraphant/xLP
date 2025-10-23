@@ -6,7 +6,7 @@ Lighter Exchange Client - Core client initialization
 import logging
 from typing import Optional
 
-from lighter import SignerClient, ApiClient, Configuration, AccountApi
+from lighter import SignerClient, ApiClient, Configuration, AccountApi, OrderApi
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +37,7 @@ class LighterBaseClient:
         self.client: Optional[SignerClient] = None
         self.api_client: Optional[ApiClient] = None
         self.account_api: Optional[AccountApi] = None
+        self.order_api: Optional[OrderApi] = None
 
     async def initialize(self):
         """Initialize the Lighter SignerClient and AccountApi"""
@@ -52,10 +53,11 @@ class LighterBaseClient:
                     api_key_index=self.api_key_index,
                 )
 
-                # Initialize ApiClient and AccountApi for account data queries
+                # Initialize ApiClient and APIs for data queries
                 config = Configuration(host=self.base_url)
                 self.api_client = ApiClient(configuration=config)
                 self.account_api = AccountApi(self.api_client)
+                self.order_api = OrderApi(self.api_client)
 
                 # Validate API key
                 err = self.client.check_client()

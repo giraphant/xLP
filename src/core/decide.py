@@ -273,7 +273,7 @@ def _decide_symbol_actions_v2(
 
         # 冷却期：保持现状（避免触发下单）
         if in_cooldown:
-            reason = f"Cooling down ({cooldown_remaining:.1f} min remaining)" if not has_active_order else f"Maintaining order in cooldown (zone: {zone})"
+            reason = f"In cooldown period ({cooldown_remaining:.1f} min remaining)" if not has_active_order else f"Maintaining order in cooldown (zone: {zone})"
             logger.info(f"{symbol}: 🧊 {reason}")
             return [TradingAction(
                 type=ActionType.NO_ACTION,

@@ -203,27 +203,56 @@ class LighterExchange(ExchangeInterface):
 
     async def get_recent_fills(self, symbol: str = None, minutes_back: int = 10) -> list:
         """
-        获取最近成交记录
-
-        注：当前版本通过本地缓存查找成交订单
-        未来可以通过AccountApi查询真实成交历史
+        获取最近成交记录（从交易所真实查询）
         """
-        recent_fills = []
-        cutoff_time = datetime.now() - timedelta(minutes=minutes_back)
+        try:
+            # 计算时间范围（毫秒时间戳）
+            cutoff_time = datetime.now() - timedelta(minutes=minutes_back)
+            cutoff_timestamp_ms = int(cutoff_time.timestamp() * 1000)
 
-        # 使用本地维护的订单详情找已成交订单
-        # TODO: 未来可以使用self.lighter_client.account_api.get_fills()等API
-        for order_id, details in self.order_details.items():
-            if details["status"] == "filled" and "filled_at" in details:
-                if details["filled_at"] >= cutoff_time:
-                    if symbol is None or details["symbol"] == symbol:
+            # 如果指定了symbol，获取market_id
+            market_id = None
+            if symbol:
+                lighter_symbol = self.symbol_map.get(symbol)
+                if lighter_symbol:
+                    market_id = lighter_symbol.market_id
+
+            # 调用 OrderApi.trades() 查询成交历史
+            trades_response = self.lighter_client.order_api.trades(
+                sort_by="block_number",
+                sort_dir="desc",
+                limit=100,  # 最多查100条
+                account_index=self.lighter_client.account_index,
+                market_id=market_id,
+                var_from=cutoff_timestamp_ms
+            )
+
+            # 解析成交记录
+            recent_fills = []
+            if trades_response and hasattr(trades_response, 'data'):
+                for trade in trades_response.data:
+                    # 解析时间
+                    filled_at = datetime.fromtimestamp(trade.block_number / 1000) if hasattr(trade, 'block_number') else None
+
+                    # 获取symbol
+                    trade_symbol = None
+                    for sym, lighter_sym in self.symbol_map.items():
+                        if lighter_sym.market_id == trade.market_id:
+                            trade_symbol = sym
+                            break
+
+                    if trade_symbol:
                         recent_fills.append({
-                            "order_id": order_id,
-                            "symbol": details["symbol"],
-                            "side": details["side"],
-                            "filled_size": details["filled_size"],
-                            "filled_price": details["price"],
-                            "filled_at": details["filled_at"]
+                            "order_id": str(trade.order_index) if hasattr(trade, 'order_index') else None,
+                            "symbol": trade_symbol,
+                            "side": "sell" if trade.ask_filter == 1 else "buy",
+                            "filled_size": float(trade.base_amount) / 1000 if hasattr(trade, 'base_amount') else 0,
+                            "filled_price": float(trade.price) if hasattr(trade, 'price') else 0,
+                            "filled_at": filled_at
                         })
 
-        return recent_fills
+            return recent_fills
+
+        except Exception as e:
+            logger.error(f"Error fetching recent fills: {e}")
+            return []

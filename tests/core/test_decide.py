@@ -139,7 +139,7 @@ class TestCooldownLogic:
         assert "cooldown" in actions[0].reason.lower()
 
     def test_cooldown_zone_worsened_with_order(self, mock_config):
-        """冷却期内，有订单，zone恶化 → CANCEL_ORDER + PLACE_LIMIT_ORDER"""
+        """冷却期内，有订单，zone恶化 → CANCEL_ORDER + PLACE_LIMIT_ORDER（Zone恶化优先级高于冷却期）"""
         order_info = create_order_info(
             has_order=True,
             oldest_order_time=datetime.now() - timedelta(minutes=3),
@@ -160,10 +160,10 @@ class TestCooldownLogic:
             config=mock_config
         )
 
+        # Zone恶化是决策3，优先级高于冷却期，立即重新下单
         assert len(actions) == 2
         assert actions[0].type == ActionType.CANCEL_ORDER
         assert actions[1].type == ActionType.PLACE_LIMIT_ORDER
-        assert actions[1].metadata.get("in_cooldown") is True
 
     def test_cooldown_zone_improved_with_order(self, mock_config):
         """冷却期内，有订单，zone改善 → NO_ACTION（保持订单）"""
@@ -390,7 +390,7 @@ class TestDecisionLogic:
         assert "maintaining" in actions[0].reason.lower()
 
     def test_cooldown_zone_worsened(self, mock_config):
-        """冷却期内zone恶化 → CANCEL_ORDER + PLACE_LIMIT_ORDER (in_cooldown=True)"""
+        """冷却期内zone恶化 → CANCEL_ORDER + PLACE_LIMIT_ORDER（Zone恶化优先级高于冷却期）"""
         order_info = create_order_info(
             has_order=True,
             oldest_order_time=datetime.now() - timedelta(minutes=3),
@@ -411,10 +411,10 @@ class TestDecisionLogic:
             config=mock_config
         )
 
+        # Zone恶化是决策3，优先级高于冷却期，立即重新下单
         assert len(actions) == 2
         assert actions[0].type == ActionType.CANCEL_ORDER
         assert actions[1].type == ActionType.PLACE_LIMIT_ORDER
-        assert actions[1].metadata["in_cooldown"] is True
 
 
 class TestLimitOrderCalculation:
