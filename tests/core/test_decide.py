@@ -19,7 +19,7 @@ from core.decide import (
     _decide_symbol_actions_v2,
     ActionType
 )
-from core.prepare import calculate_zone
+from utils.calculators import calculate_zone
 from utils.config import HedgeConfig
 
 

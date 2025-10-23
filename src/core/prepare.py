@@ -13,7 +13,7 @@ import logging
 import asyncio
 from typing import Dict, Any, Tuple, List, Optional
 from datetime import datetime, timedelta
-from utils.offset import calculate_offset_and_cost
+from utils.calculators import calculate_offset_and_cost, calculate_zone, calculate_zone_from_orders
 from utils.config import HedgeConfig
 
 logger = logging.getLogger(__name__)
@@ -277,69 +277,6 @@ async def _calculate_offsets(
     return offsets
 
 
-def calculate_zone(
-    offset_usd: float,
-    min_threshold: float,
-    max_threshold: float,
-    step: float
-) -> Optional[int]:
-    """
-    根据偏移USD绝对值计算所在区间（纯函数）
-
-    Returns:
-        None: 低于最低阈值
-        0-N: 区间编号
-        -1: 超过最高阈值（警报）
-    """
-    abs_usd = abs(offset_usd)
-
-    if abs_usd < min_threshold:
-        return None
-
-    if abs_usd > max_threshold:
-        return -1
-
-    zone = int((abs_usd - min_threshold) / step)
-    return zone
-
-
-def _calculate_zone_from_orders(
-    orders: List[Dict],
-    current_price: float,
-    threshold_min: float,
-    threshold_step: float
-) -> Optional[int]:
-    """
-    从订单信息反推上次下单时的 zone（无状态）
-
-    算法：(订单价值 - threshold_min) / threshold_step
-
-    Args:
-        orders: 订单列表 [{"size": x, "price": y}, ...]
-        current_price: 当前价格（用于fallback）
-        threshold_min: 最小阈值
-        threshold_step: 阈值步长
-
-    Returns:
-        zone (int) 或 None（无订单）
-    """
-    if not orders:
-        return None
-
-    # 取第一个订单（假设同一symbol的订单zone相同）
-    order = orders[0]
-    order_size = abs(order.get("size", 0))
-    order_price = order.get("price", current_price)
-
-    # 计算订单价值（USD）
-    order_value_usd = order_size * order_price
-
-    # 反推 zone
-    zone = int((order_value_usd - threshold_min) / threshold_step)
-
-    return max(zone, 1)  # zone 至少为 1
-
-
 def _calculate_zones(
     offsets: Dict[str, Tuple[float, float]],
     prices: Dict[str, float],
@@ -438,7 +375,7 @@ async def _fetch_order_status(
 
             # 从订单计算 previous_zone（在 prepare 阶段计算好）
             price = prices.get(symbol, 0)
-            previous_zone = _calculate_zone_from_orders(
+            previous_zone = calculate_zone_from_orders(
                 symbol_orders,
                 price,
                 config.threshold_min_usd,

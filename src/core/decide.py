@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from enum import Enum
 from datetime import datetime
 from utils.config import HedgeConfig
+from utils.calculators import calculate_close_size, calculate_limit_price
 
 logger = logging.getLogger(__name__)
 
@@ -118,21 +119,6 @@ async def decide_actions(
     return all_actions
 
 
-def _calculate_close_size(offset: float, close_ratio: float) -> float:
-    """计算平仓数量（纯函数）"""
-    return abs(offset) * (close_ratio / 100.0)
-
-
-def _calculate_limit_price(offset: float, cost_basis: float, price_offset_percent: float) -> float:
-    """计算限价单价格（纯函数）"""
-    if offset > 0:
-        # 多头敞口：需要卖出平仓，挂高价
-        return cost_basis * (1 + price_offset_percent / 100)
-    else:
-        # 空头敞口：需要买入平仓，挂低价
-        return cost_basis * (1 - price_offset_percent / 100)
-
-
 def _create_limit_order_action(
     symbol: str,
     offset: float,
@@ -144,8 +130,8 @@ def _create_limit_order_action(
     in_cooldown: bool = False
 ) -> TradingAction:
     """创建限价单操作（辅助函数，消除重复）"""
-    order_price = _calculate_limit_price(offset, cost_basis, config.order_price_offset)
-    order_size = _calculate_close_size(offset, config.close_ratio)
+    order_price = calculate_limit_price(offset, cost_basis, config.order_price_offset)
+    order_size = calculate_close_size(offset, config.close_ratio)
     side = "sell" if offset > 0 else "buy"
 
     return TradingAction(
@@ -239,7 +225,7 @@ def _decide_symbol_actions_v2(
             ))
 
             # 市价平仓
-            order_size = _calculate_close_size(offset, config.close_ratio)
+            order_size = calculate_close_size(offset, config.close_ratio)
             side = "sell" if offset > 0 else "buy"
 
             actions.append(TradingAction(

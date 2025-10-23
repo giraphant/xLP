@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
-from utils.offset import calculate_offset_and_cost
+from utils.calculators import calculate_offset_and_cost
 
 
 def test_cost_tracking():
