@@ -49,18 +49,22 @@ async def decide_actions(
     config: HedgeConfig
 ) -> List[TradingAction]:
     """
-    批量决策所有币种（完全无状态）
+    批量决策所有币种（纯决策引擎 - 不做任何计算）
+
+    职责：基于 prepare 准备好的数据做决策
+    原则：只从 data 获取数据，不做任何计算
 
     Args:
-        data: prepare_data() 的返回值
+        data: prepare_data() 准备好的所有数据
             {
                 "symbols": [...],
                 "prices": {...},
                 "offsets": {symbol: (offset, cost_basis)},
-                "order_status": {symbol: {"orders": [...]}},
+                "zones": {symbol: {"zone": x, "offset_usd": y}},  # prepare 计算好
+                "order_status": {symbol: {"previous_zone": x, ...}},  # prepare 计算好
                 "fill_history": {symbol: {"latest_fill_time": ...}}
             }
-        config: 配置字典
+        config: 配置对象
 
     Returns:
         List[TradingAction]
@@ -72,29 +76,23 @@ async def decide_actions(
     all_actions = []
 
     for symbol in data["symbols"]:
-        if symbol not in data["offsets"] or symbol not in data["prices"]:
+        # 从 prepare 获取所有准备好的数据（纯决策，无计算）
+        if symbol not in data["offsets"] or symbol not in data["zones"]:
             continue
 
+        # 数据获取（不做计算）
         offset, cost_basis = data["offsets"][symbol]
         price = data["prices"][symbol]
-        offset_usd = abs(offset) * price
+        zone_info = data["zones"][symbol]
+        zone = zone_info["zone"]
+        offset_usd = zone_info["offset_usd"]
 
-        # 计算区间
-        zone = _calculate_zone(
-            offset_usd,
-            config.threshold_min_usd,
-            config.threshold_max_usd,
-            config.threshold_step_usd
-        )
-
-        # 获取实时订单和成交状态（从prepare传入，包含已计算好的 previous_zone）
+        # 获取订单和成交状态
         order_info = data.get("order_status", {}).get(symbol, {})
         fill_info = data.get("fill_history", {}).get(symbol, {})
-
-        # previous_zone 已在 prepare 阶段计算好
         previous_zone = order_info.get("previous_zone")
 
-        # 调用核心决策函数（传入实时状态）
+        # 调用核心决策函数（纯决策逻辑）
         actions = _decide_symbol_actions_v2(
             symbol=symbol,
             offset=offset,
@@ -120,14 +118,14 @@ async def decide_actions(
     return all_actions
 
 
-def _calculate_zone(
+def calculate_zone(
     offset_usd: float,
     min_threshold: float,
     max_threshold: float,
     step: float
 ) -> Optional[int]:
     """
-    根据偏移USD绝对值计算所在区间（纯函数）
+    根据偏移USD绝对值计算所在区间（纯函数 - 供 prepare 调用）
 
     Returns:
         None: 低于最低阈值

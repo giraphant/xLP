@@ -65,12 +65,16 @@ async def prepare_data(
         cost_history
     )
 
+    # 5. 计算 zones（prepare 负责所有数据准备，包括 zone）
+    zones = _calculate_zones(offsets, prices, config)
+
     return {
         "symbols": symbols,
         "ideal_hedges": ideal_hedges,
         "positions": positions,
         "prices": prices,
         "offsets": offsets,
+        "zones": zones,  # 新增：包含 zone 和 previous_zone
         "order_status": order_status,
         "fill_history": fill_history
     }
@@ -271,6 +275,62 @@ async def _calculate_offsets(
                    f"(${offset_usd:.2f}) cost=${cost:.2f}")
 
     return offsets
+
+
+def _calculate_zones(
+    offsets: Dict[str, Tuple[float, float]],
+    prices: Dict[str, float],
+    config
+) -> Dict[str, Dict[str, Optional[int]]]:
+    """
+    计算所有 zone 信息（prepare 负责数据准备）
+
+    Returns:
+        {
+            "SOL": {
+                "zone": 2,  # 当前应该在的 zone
+                "offset_usd": 12.5  # USD 偏移值
+            },
+            ...
+        }
+    """
+    from core.decide import calculate_zone  # 导入纯函数
+
+    logger.info("=" * 50)
+    logger.info("🎯 CALCULATING ZONES")
+    logger.info("=" * 50)
+
+    zones = {}
+
+    for symbol, (offset, cost) in offsets.items():
+        if symbol not in prices:
+            continue
+
+        # 计算 offset_usd
+        offset_usd = abs(offset) * prices[symbol]
+
+        # 计算当前 zone
+        zone = calculate_zone(
+            offset_usd,
+            config.threshold_min_usd,
+            config.threshold_max_usd,
+            config.threshold_step_usd
+        )
+
+        zones[symbol] = {
+            "zone": zone,
+            "offset_usd": offset_usd
+        }
+
+        # 日志
+        if zone is None:
+            logger.info(f"  • {symbol}: Below threshold (${offset_usd:.2f})")
+        elif zone == -1:
+            logger.warning(f"  ⚠️  {symbol}: ALERT - Exceeded max threshold (${offset_usd:.2f})")
+        else:
+            logger.info(f"  • {symbol}: Zone {zone} (${offset_usd:.2f})")
+
+    return zones
 
 
 async def _fetch_order_status(
