@@ -16,10 +16,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / 'src'))
 import pytest
 from datetime import datetime, timedelta
 from core.decide import (
-    calculate_zone,
     _decide_symbol_actions_v2,
     ActionType
 )
+from core.prepare import calculate_zone
 from utils.config import HedgeConfig
 
 
