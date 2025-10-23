@@ -19,7 +19,6 @@ from core.report import generate_reports
 # 导入基础设施
 from exchanges import create_exchange
 from utils.notifier import Notifier
-from utils.state import StateManager
 from core.exceptions import HedgeEngineError, InvalidConfigError
 from utils.config import HedgeConfig, ValidationError
 from utils.matsu import MatsuReporter
@@ -51,7 +50,6 @@ class HedgeEngine:
 
         # 初始化组件（exchange/notifier 需要 dict 格式）
         config_dict = self.config.to_dict()
-        self.state_manager = StateManager()
         self.exchange = create_exchange(config_dict["exchange"])
         self.notifier = Notifier(config_dict["pushover"])
 
@@ -63,6 +61,9 @@ class HedgeEngine:
             "jlp": jlp.calculate_hedge,
             "alp": alp.calculate_hedge
         }
+
+        # 极简状态存储（仅cost_basis用于加权平均）
+        self.cost_history = {}  # {symbol: (offset, cost_basis)}
 
     def _initialize_matsu_reporter(self):
         """初始化Matsu监控上报器（可选）"""
@@ -103,13 +104,12 @@ class HedgeEngine:
                 self.config,
                 self.pool_calculators,
                 self.exchange,
-                self.state_manager
+                self.cost_history  # prepare 会读写 cost_history
             )
 
-            # ========== 步骤 2: 决策 ==========
+            # ========== 步骤 2: 决策（完全无状态）==========
             actions = await decide_actions(
                 data,
-                self.state_manager,
                 self.config
             )
 
@@ -117,16 +117,13 @@ class HedgeEngine:
             results = await execute_actions(
                 actions,
                 self.exchange,
-                self.state_manager,
-                self.notifier,
-                data.get("state_updates")
+                self.notifier
             )
 
             # ========== 步骤 4: 报告 ==========
             await generate_reports(
                 data,
                 results,
-                self.state_manager,
                 self.config,
                 self.matsu_reporter
             )

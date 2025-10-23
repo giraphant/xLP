@@ -21,21 +21,17 @@ logger = logging.getLogger(__name__)
 async def execute_actions(
     actions: List[TradingAction],
     exchange,
-    state_manager,
-    notifier,
-    state_updates: Dict[str, Dict[str, Any]] = None
+    notifier
 ) -> List[Dict[str, Any]]:
     """
-    执行所有操作
+    执行所有操作（完全无状态）
 
     依赖：exchanges/, notifications/
 
     Args:
         actions: 决策产生的操作列表
         exchange: 交易所接口
-        state_manager: 状态管理器
         notifier: 通知器
-        state_updates: prepare阶段计算的状态更新（统一在此更新）
 
     Returns:
         执行结果列表 [{"action": TradingAction, "success": bool, ...}, ...]
@@ -43,33 +39,6 @@ async def execute_actions(
     logger.info("=" * 50)
     logger.info("⚡ EXECUTING ACTIONS")
     logger.info("=" * 50)
-
-    # 第一步：更新所有 prepare 阶段计算的状态（统一在此处更新）
-    if state_updates:
-        logger.info("📝 Updating states from prepare phase:")
-        for symbol, updates in state_updates.items():
-            # 构建要更新的状态
-            symbol_state_update = {}
-
-            # 更新 offset 和 cost_basis
-            if "offset" in updates:
-                symbol_state_update["offset"] = updates["offset"]
-            if "cost_basis" in updates:
-                symbol_state_update["cost_basis"] = updates["cost_basis"]
-
-            # 更新 exchange_position
-            if "exchange_position" in updates:
-                symbol_state_update["exchange_position"] = updates["exchange_position"]
-
-            # 应用状态更新
-            if symbol_state_update:
-                state_manager.update_symbol_state(symbol, symbol_state_update)
-                logger.debug(f"  • {symbol}: {symbol_state_update}")
-
-            # 如果检测到持仓变化（成交），记录日志
-            # 注：last_fill_time已移除，现在从交易所查询成交历史
-            if updates.get("position_changed"):
-                logger.info(f"  🔔 {symbol}: Position change detected (fill occurred)")
 
     if not actions:
         logger.info("No actions to execute")
@@ -84,7 +53,7 @@ async def execute_actions(
             # 执行限价单
             if action.type == ActionType.PLACE_LIMIT_ORDER:
                 order_id = await _execute_limit_order(
-                    action, exchange, state_manager
+                    action, exchange
                 )
                 result["success"] = True
                 result["order_id"] = order_id
@@ -92,7 +61,7 @@ async def execute_actions(
             # 执行市价单
             elif action.type == ActionType.PLACE_MARKET_ORDER:
                 order_id = await _execute_market_order(
-                    action, exchange, state_manager, notifier
+                    action, exchange, notifier
                 )
                 result["success"] = True
                 result["order_id"] = order_id
@@ -100,7 +69,7 @@ async def execute_actions(
             # 撤销订单
             elif action.type == ActionType.CANCEL_ORDER:
                 success = await _execute_cancel_order(
-                    action, exchange, state_manager
+                    action, exchange
                 )
                 result["success"] = success
 
@@ -129,11 +98,10 @@ async def execute_actions(
 
 async def _execute_limit_order(
     action: TradingAction,
-    exchange,
-    state_manager
+    exchange
 ) -> str:
     """
-    执行限价单
+    执行限价单（无状态）
 
     Returns:
         order_id
@@ -151,25 +119,16 @@ async def _execute_limit_order(
 
     logger.info(f"✅ Limit order placed: {action.symbol} (ID: {order_id})")
 
-    # 更新状态（只更新current_zone，不再维护started_at）
-    state_manager.update_symbol_state(action.symbol, {
-        "monitoring": {
-            "current_zone": action.metadata.get("zone")
-            # started_at已移除 - 从交易所查询订单状态
-        }
-    })
-
     return order_id
 
 
 async def _execute_market_order(
     action: TradingAction,
     exchange,
-    state_manager,
     notifier
 ) -> str:
     """
-    执行市价单
+    执行市价单（无状态）
 
     Returns:
         order_id
@@ -194,25 +153,15 @@ async def _execute_market_order(
             action.side
         )
 
-    # 清除监控状态（不再维护started_at和last_fill_time）
-    state_manager.update_symbol_state(action.symbol, {
-        "monitoring": {
-            # started_at已移除 - 从交易所查询订单状态
-            # current_zone 保留用于 zone 对比
-        }
-        # last_fill_time已移除 - 从交易所查询成交历史
-    })
-
     return order_id
 
 
 async def _execute_cancel_order(
     action: TradingAction,
-    exchange,
-    state_manager
+    exchange
 ) -> bool:
     """
-    撤销订单（取消该币种所有活跃订单）
+    撤销订单（无状态）
 
     Returns:
         是否成功
@@ -224,14 +173,6 @@ async def _execute_cancel_order(
 
     if canceled_count > 0:
         logger.info(f"✅ Canceled {canceled_count} order(s): {action.symbol}")
-
-        # 清除监控状态（保留 current_zone 用于下一轮 zone 对比）
-        state_manager.update_symbol_state(action.symbol, {
-            "monitoring": {
-                # started_at已移除 - 从交易所查询订单状态
-                # current_zone 保留，用于判断下一轮 zone 是否变化
-            }
-        })
         return True
     else:
         logger.warning(f"⚠️  No orders to cancel: {action.symbol}")

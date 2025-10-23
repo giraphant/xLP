@@ -18,7 +18,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from engine import HedgeEngine
 from exchanges.mock.exchange import MockExchange
-from utils.state import StateManager
 from utils.config import HedgeConfig
 from core.decide import ActionType
 
@@ -83,7 +82,8 @@ class TestEngineIntegration:
         4. Report: 生成报告
         """
         # 创建组件
-        state_manager = StateManager()
+        cost_history = {}  # {symbol: (offset, cost)}
+        zone_history = {}  # {symbol: zone}
         exchange = MockExchange(mock_config.to_dict()["exchange"])
 
         # 设置价格（调低，避免超阈值）
@@ -114,7 +114,7 @@ class TestEngineIntegration:
             mock_config,
             pool_calculators,
             exchange,
-            state_manager
+            cost_history
         )
 
         # 验证数据准备
@@ -131,7 +131,7 @@ class TestEngineIntegration:
         assert 5.0 < sol_offset_usd < 20.0
 
         # === 步骤2: Decide ===
-        actions = await decide_actions(data, state_manager, mock_config)
+        actions = await decide_actions(data, zone_history, mock_config)
 
         # 应该决定下限价单
         sol_actions = [a for a in actions if a.symbol == "SOL"]
@@ -144,18 +144,16 @@ class TestEngineIntegration:
             results = await execute_actions(
                 actions,
                 exchange,
-                state_manager,
-                AsyncMock(),  # mock notifier
-                data.get("state_updates")
+                zone_history,
+                AsyncMock()  # mock notifier
             )
 
             # 验证订单已下
             assert len(exchange.orders) > 0
 
-            # 验证状态已更新
-            sol_state = state_manager.get_symbol_state("SOL")
-            # started_at已移除 - 现在从交易所查询订单状态
-            assert sol_state["monitoring"]["current_zone"] is not None
+            # 验证 zone_history 已更新
+            assert "SOL" in zone_history
+            assert zone_history["SOL"] is not None
 
     @pytest.mark.asyncio
     async def test_zone_change_reorder(self, mock_config, mock_pool_data):
@@ -167,7 +165,8 @@ class TestEngineIntegration:
         2. 价格变化：Zone变为2
         3. 第二次循环：撤单，重新下单
         """
-        state_manager = StateManager()
+        cost_history = {}
+        zone_history = {}
         exchange = MockExchange(mock_config.to_dict()["exchange"])
         exchange.prices = {"SOL": 150.0}
 
@@ -182,13 +181,12 @@ class TestEngineIntegration:
         from core.execute import execute_actions
 
         # === 第一次循环 ===
-        data = await prepare_data(mock_config, pool_calculators, exchange, state_manager)
-        actions = await decide_actions(data, state_manager, mock_config)
-        await execute_actions(actions, exchange, state_manager, AsyncMock(), data.get("state_updates"))
+        data = await prepare_data(mock_config, pool_calculators, exchange, cost_history)
+        actions = await decide_actions(data, zone_history, mock_config)
+        await execute_actions(actions, exchange, zone_history, AsyncMock())
 
         # 记录第一次的zone
-        first_state = state_manager.get_symbol_state("SOL")
-        first_zone = first_state["monitoring"]["current_zone"]
+        first_zone = zone_history.get("SOL")
 
         # === 增加池子持仓，导致offset变大，zone恶化 ===
         async def mock_jlp_calculator_increased(amount):

@@ -46,20 +46,20 @@ class TradingAction:
 
 async def decide_actions(
     data: Dict[str, Any],
-    state_manager,
     config: HedgeConfig
 ) -> List[TradingAction]:
     """
-    批量决策所有币种
+    批量决策所有币种（完全无状态）
 
     Args:
         data: prepare_data() 的返回值
             {
                 "symbols": [...],
                 "prices": {...},
-                "offsets": {symbol: (offset, cost_basis)}
+                "offsets": {symbol: (offset, cost_basis)},
+                "order_status": {symbol: {"orders": [...]}},
+                "fill_history": {symbol: {"latest_fill_time": ...}}
             }
-        state_manager: 状态管理器
         config: 配置字典
 
     Returns:
@@ -87,12 +87,12 @@ async def decide_actions(
             config.threshold_step_usd
         )
 
-        # 获取本地状态（用于current_zone对比）
-        state = state_manager.get_symbol_state(symbol)
-
-        # 获取实时订单和成交状态（从prepare传入）
+        # 获取实时订单和成交状态（从prepare传入，包含已计算好的 previous_zone）
         order_info = data.get("order_status", {}).get(symbol, {})
         fill_info = data.get("fill_history", {}).get(symbol, {})
+
+        # previous_zone 已在 prepare 阶段计算好
+        previous_zone = order_info.get("previous_zone")
 
         # 调用核心决策函数（传入实时状态）
         actions = _decide_symbol_actions_v2(
@@ -102,7 +102,7 @@ async def decide_actions(
             current_price=price,
             offset_usd=offset_usd,
             zone=zone,
-            state=state,
+            previous_zone=previous_zone,
             order_info=order_info,
             fill_info=fill_info,
             config=config
@@ -383,6 +383,43 @@ def _decide_symbol_actions(
 # _check_cooldown 函数已被移除 - 冷却期逻辑已内联到 _decide_symbol_actions 中
 
 
+def _calculate_zone_from_orders(
+    orders: List[Dict],
+    current_price: float,
+    threshold_min: float,
+    threshold_step: float
+) -> Optional[int]:
+    """
+    从订单信息反推上次下单时的 zone（无状态）
+
+    算法：(订单价值 - threshold_min) / threshold_step
+
+    Args:
+        orders: 订单列表 [{"size": x, "price": y}, ...]
+        current_price: 当前价格（用于fallback）
+        threshold_min: 最小阈值
+        threshold_step: 阈值步长
+
+    Returns:
+        zone (int) 或 None（无订单）
+    """
+    if not orders:
+        return None
+
+    # 取第一个订单（假设同一symbol的订单zone相同）
+    order = orders[0]
+    order_size = abs(order.get("size", 0))
+    order_price = order.get("price", current_price)
+
+    # 计算订单价值（USD）
+    order_value_usd = order_size * order_price
+
+    # 反推 zone
+    zone = int((order_value_usd - threshold_min) / threshold_step)
+
+    return max(zone, 1)  # zone 至少为 1
+
+
 def _decide_symbol_actions_v2(
     symbol: str,
     offset: float,
@@ -390,18 +427,18 @@ def _decide_symbol_actions_v2(
     current_price: float,
     offset_usd: float,
     zone: Optional[int],
-    state: Dict[str, Any],
+    previous_zone: Optional[int],
     order_info: Dict[str, Any],
     fill_info: Dict[str, Any],
     config: Dict[str, Any]
 ) -> List[TradingAction]:
     """
-    优化版决策函数 - 使用实时订单状态
+    优化版决策函数 - 完全无状态
 
     与v1的区别：
-    - 使用从交易所查询的实时订单状态，而不是本地的started_at
-    - 使用从交易所查询的成交历史，而不是本地的last_fill_time
-    - current_zone仍从state获取，用于对比zone变化
+    - 使用从交易所查询的实时订单状态
+    - 使用从交易所查询的成交历史
+    - previous_zone 从订单信息实时计算，不依赖本地状态
 
     状态机：
     1. 超阈值 → 警报退出
@@ -416,13 +453,9 @@ def _decide_symbol_actions_v2(
     oldest_order_time = order_info.get("oldest_order_time")
     latest_fill_time = fill_info.get("latest_fill_time")
 
-    # 从本地状态获取current_zone用于对比
-    monitoring = state.get("monitoring", {})
-    current_zone = monitoring.get("current_zone")
-
     # 记录状态转换
-    if zone != current_zone:
-        logger.info(f"{symbol}: Zone transition: {current_zone} → {zone} (${offset_usd:.2f})")
+    if zone != previous_zone:
+        logger.info(f"{symbol}: Zone transition: {previous_zone} → {zone} (${offset_usd:.2f})")
 
     # ========== 决策1: 超阈值检查 ==========
     if zone == -1:

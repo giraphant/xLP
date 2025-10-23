@@ -23,7 +23,7 @@ async def prepare_data(
     config: HedgeConfig,
     pool_calculators: Dict[str, callable],
     exchange,
-    state_manager
+    cost_history: Dict[str, Tuple[float, float]]
 ) -> Dict[str, Any]:
     """
     准备所有需要的数据
@@ -32,7 +32,7 @@ async def prepare_data(
         config: 配置字典
         pool_calculators: {"jlp": callable, "alp": callable}
         exchange: 交易所接口
-        state_manager: 状态管理器
+        cost_history: 成本历史 {symbol: (offset, cost_basis)}
 
     Returns:
         {
@@ -51,32 +51,19 @@ async def prepare_data(
 
     # 3. 获取市场数据
     symbols = list(ideal_hedges.keys())
-    positions, prices, position_updates = await _fetch_market_data(exchange, symbols, config, state_manager)
+    positions, prices = await _fetch_market_data(exchange, symbols, config)
 
-    # 3.5 获取订单和成交状态（新增）
-    order_status = await _fetch_order_status(exchange, symbols)
+    # 3.5 获取订单和成交状态（传入价格用于计算 previous_zone）
+    order_status = await _fetch_order_status(exchange, symbols, prices, config)
     fill_history = await _fetch_fill_history(exchange, symbols, config.cooldown_after_fill_minutes)
 
-    # 4. 计算偏移和成本
-    offsets, offset_updates = await _calculate_offsets(
+    # 4. 计算偏移和成本（prepare 自己读写 cost_history）
+    offsets = await _calculate_offsets(
         ideal_hedges,
         positions,
         prices,
-        state_manager
+        cost_history
     )
-
-    # 5. 合并状态更新（不在这里更新，而是传递给 execute）
-    state_updates = {}
-    for symbol in symbols:
-        state_updates[symbol] = {}
-
-        # 合并 position 相关更新
-        if symbol in position_updates:
-            state_updates[symbol].update(position_updates[symbol])
-
-        # 合并 offset 相关更新
-        if symbol in offset_updates:
-            state_updates[symbol].update(offset_updates[symbol])
 
     return {
         "symbols": symbols,
@@ -84,9 +71,8 @@ async def prepare_data(
         "positions": positions,
         "prices": prices,
         "offsets": offsets,
-        "order_status": order_status,  # 新增
-        "fill_history": fill_history,  # 新增
-        "state_updates": state_updates
+        "order_status": order_status,
+        "fill_history": fill_history
     }
 
 
@@ -172,19 +158,17 @@ def _calculate_ideal_hedges(pool_data: Dict[str, Dict[str, Any]]) -> Dict[str, f
 async def _fetch_market_data(
     exchange,
     symbols: list,
-    config: HedgeConfig,
-    state_manager
-) -> Tuple[Dict[str, float], Dict[str, float], Dict[str, Dict[str, Any]]]:
+    config: HedgeConfig
+) -> Tuple[Dict[str, float], Dict[str, float]]:
     """
     并发获取市场数据（价格和持仓）
 
     依赖：exchanges/
 
     Returns:
-        (positions, prices, position_updates)
+        (positions, prices)
         - positions: 实际持仓（含初始偏移）
         - prices: 当前价格
-        - position_updates: 需要更新的状态信息
     """
     logger.info("=" * 50)
     logger.info("💹 FETCHING MARKET DATA")
@@ -212,7 +196,6 @@ async def _fetch_market_data(
 
     # 处理持仓结果
     positions = {}
-    position_updates = {}
     initial_offset_config = config.get_initial_offset()
 
     logger.info("📊 ACTUAL POSITIONS (Exchange + Initial Offset):")
@@ -220,20 +203,6 @@ async def _fetch_market_data(
         if isinstance(position, Exception):
             logger.error(f"  ❌ {symbol}: Failed to get position - {position}")
             position = 0.0
-
-        # 检查交易所持仓是否变化（只检测，不更新）
-        state = state_manager.get_symbol_state(symbol)
-        old_exchange_position = state.get("exchange_position", position)  # 首次默认为当前值
-
-        position_changed = (position != old_exchange_position)
-        if position_changed:
-            logger.info(f"  🔄 {symbol}: Position changed {old_exchange_position:+.4f} → {position:+.4f} (fill detected)")
-
-        # 收集需要更新的状态（不立即更新）
-        position_updates[symbol] = {
-            "exchange_position": position,
-            "position_changed": position_changed
-        }
 
         # 加上初始偏移量
         initial_offset = initial_offset_config.get(symbol, 0.0)
@@ -247,41 +216,39 @@ async def _fetch_market_data(
             logger.info(f"  📍 {symbol}: {total_position:+.4f}")
 
     logger.info(f"✅ Fetched market data for {len(symbols)} symbols")
-    return positions, prices, position_updates
+    return positions, prices
 
 
 async def _calculate_offsets(
     ideal_hedges: Dict[str, float],
     positions: Dict[str, float],
     prices: Dict[str, float],
-    state_manager
-) -> Tuple[Dict[str, Tuple[float, float]], Dict[str, Dict[str, Any]]]:
+    cost_history: Dict[str, Tuple[float, float]]
+) -> Dict[str, Tuple[float, float]]:
     """
-    计算偏移和成本（纯函数，不更新状态）
+    计算偏移和成本（prepare 自己读写 cost_history）
 
     依赖：utils/offset.py
 
+    Args:
+        cost_history: {symbol: (offset, cost_basis)} - prepare 会读和写
+
     Returns:
-        (offsets, offset_updates)
-        - offsets: {symbol: (offset, cost_basis)}
-        - offset_updates: 需要更新的状态信息
+        offsets: {symbol: (offset, cost_basis)}
     """
     logger.info("=" * 50)
     logger.info("🧮 CALCULATING OFFSETS")
     logger.info("=" * 50)
 
     offsets = {}
-    offset_updates = {}
 
     for symbol in ideal_hedges:
         if symbol not in prices:
             logger.warning(f"  ⚠️  {symbol}: No price data, skipping")
             continue
 
-        # 获取旧状态（只读）
-        state = state_manager.get_symbol_state(symbol)
-        old_offset = state.get("offset", 0.0)
-        old_cost = state.get("cost_basis", 0.0)
+        # 从 cost_history 读取历史值
+        old_offset, old_cost = cost_history.get(symbol, (0.0, 0.0))
 
         # 调用纯函数计算
         offset, cost = calculate_offset_and_cost(
@@ -292,13 +259,10 @@ async def _calculate_offsets(
             old_cost
         )
 
-        offsets[symbol] = (offset, cost)
+        # 立即写回 cost_history（prepare 自己管理）
+        cost_history[symbol] = (offset, cost)
 
-        # 收集需要更新的状态（不立即更新）
-        offset_updates[symbol] = {
-            "offset": offset,
-            "cost_basis": cost
-        }
+        offsets[symbol] = (offset, cost)
 
         # 日志输出
         offset_usd = abs(offset) * prices[symbol]
@@ -306,12 +270,17 @@ async def _calculate_offsets(
         logger.info(f"  • {symbol}: {direction} offset={offset:+.4f} "
                    f"(${offset_usd:.2f}) cost=${cost:.2f}")
 
-    return offsets, offset_updates
+    return offsets
 
 
-async def _fetch_order_status(exchange, symbols: List[str]) -> Dict[str, Dict]:
+async def _fetch_order_status(
+    exchange,
+    symbols: List[str],
+    prices: Dict[str, float],
+    config
+) -> Dict[str, Dict]:
     """
-    获取所有币种的订单状态
+    获取所有币种的订单状态并计算 previous_zone
 
     Returns:
         {
@@ -319,7 +288,8 @@ async def _fetch_order_status(exchange, symbols: List[str]) -> Dict[str, Dict]:
                 "has_order": bool,
                 "order_count": int,
                 "oldest_order_time": datetime or None,
-                "orders": [...]
+                "orders": [...],
+                "previous_zone": int or None
             },
             ...
         }
@@ -337,6 +307,9 @@ async def _fetch_order_status(exchange, symbols: List[str]) -> Dict[str, Dict]:
         logger.error(f"Failed to fetch open orders: {e}")
         all_orders = []
 
+    # 导入 zone 计算函数
+    from core.decide import _calculate_zone_from_orders
+
     # 按币种整理订单
     for symbol in symbols:
         symbol_orders = [o for o in all_orders if o.get('symbol') == symbol]
@@ -344,20 +317,32 @@ async def _fetch_order_status(exchange, symbols: List[str]) -> Dict[str, Dict]:
         if symbol_orders:
             # 找到最早的订单
             oldest_order = min(symbol_orders, key=lambda x: x.get('created_at', datetime.now()))
+
+            # 从订单计算 previous_zone（在 prepare 阶段计算好）
+            price = prices.get(symbol, 0)
+            previous_zone = _calculate_zone_from_orders(
+                symbol_orders,
+                price,
+                config.threshold_min_usd,
+                config.threshold_step_usd
+            )
+
             order_status[symbol] = {
                 "has_order": True,
                 "order_count": len(symbol_orders),
                 "oldest_order_time": oldest_order.get('created_at'),
-                "orders": symbol_orders
+                "orders": symbol_orders,
+                "previous_zone": previous_zone
             }
             logger.info(f"  • {symbol}: {len(symbol_orders)} open orders, "
-                       f"oldest from {oldest_order.get('created_at', 'unknown')}")
+                       f"zone {previous_zone}, oldest from {oldest_order.get('created_at', 'unknown')}")
         else:
             order_status[symbol] = {
                 "has_order": False,
                 "order_count": 0,
                 "oldest_order_time": None,
-                "orders": []
+                "orders": [],
+                "previous_zone": None
             }
             logger.debug(f"  • {symbol}: No open orders")
 

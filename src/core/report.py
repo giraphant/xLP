@@ -18,32 +18,30 @@ logger = logging.getLogger(__name__)
 async def generate_reports(
     data: Dict[str, Any],
     results: List[Dict[str, Any]],
-    state_manager,
     config: HedgeConfig,
     matsu_reporter=None
 ):
     """
-    生成所有报告
+    生成所有报告（完全无状态）
 
     Args:
         data: prepare_data() 的返回值
         results: execute_actions() 的返回值
-        state_manager: 状态管理器
         config: 配置字典
         matsu_reporter: Matsu上报器（可选）
     """
     # 1. 控制台详细报告
     if os.getenv("ENABLE_DETAILED_REPORTS", "true").lower() in ("true", "1", "yes"):
-        await _generate_console_report(data, state_manager)
+        await _generate_console_report(data, config)
 
     # 2. Matsu 上报
     if matsu_reporter:
         await _report_to_matsu(data, matsu_reporter)
 
 
-async def _generate_console_report(data: Dict[str, Any], state_manager):
+async def _generate_console_report(data: Dict[str, Any], config: HedgeConfig):
     """
-    生成控制台详细报告
+    生成控制台详细报告（无状态 - 从订单计算zone）
     """
     logger.info("=" * 70)
     logger.info("📊 POSITION SUMMARY")
@@ -60,20 +58,17 @@ async def _generate_console_report(data: Dict[str, Any], state_manager):
         offset_usd = abs(offset) * price
         total_offset_usd += offset_usd
 
-        # 获取状态
-        state = state_manager.get_symbol_state(symbol)
-        monitoring = state.get("monitoring", {})
-
         status = "🔴 LONG" if offset > 0 else ("🟢 SHORT" if offset < 0 else "✅ BALANCED")
 
         logger.info(f"  {status} {symbol}:")
         logger.info(f"    • Offset: {offset:+.4f} (${offset_usd:.2f})")
         logger.info(f"    • Cost: ${cost_basis:.2f}")
 
-        # 检查是否有活跃订单（从传入的data获取）
+        # 检查是否有活跃订单（previous_zone 已在 prepare 阶段计算好）
         order_info = data.get("order_status", {}).get(symbol, {})
         if order_info.get("has_order"):
-            logger.info(f"    • Monitoring: zone {monitoring.get('current_zone')} ({order_info.get('order_count', 0)} orders)")
+            zone = order_info.get("previous_zone")
+            logger.info(f"    • Monitoring: zone {zone} ({order_info.get('order_count', 0)} orders)")
 
     logger.info(f"  📊 Total Exposure: ${total_offset_usd:.2f}")
 
