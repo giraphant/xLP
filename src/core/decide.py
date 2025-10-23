@@ -62,7 +62,7 @@ async def decide_actions(
                 "offsets": {symbol: (offset, cost_basis)},
                 "zones": {symbol: {"zone": x, "offset_usd": y}},  # prepare 计算好
                 "order_status": {symbol: {"previous_zone": x, ...}},  # prepare 计算好
-                "fill_history": {symbol: {"latest_fill_time": ...}}
+                "last_fill_times": {symbol: datetime or None}  # 最后成交时间
             }
         config: 配置对象
 
@@ -89,7 +89,7 @@ async def decide_actions(
 
         # 获取订单和成交状态
         order_info = data.get("order_status", {}).get(symbol, {})
-        fill_info = data.get("fill_history", {}).get(symbol, {})
+        last_fill_time = data.get("last_fill_times", {}).get(symbol)
         previous_zone = order_info.get("previous_zone")
 
         # 调用核心决策函数（纯决策逻辑）
@@ -102,7 +102,7 @@ async def decide_actions(
             zone=zone,
             previous_zone=previous_zone,
             order_info=order_info,
-            fill_info=fill_info,
+            last_fill_time=last_fill_time,
             config=config
         )
 
@@ -237,7 +237,7 @@ def _decide_symbol_actions_v2(
     zone: Optional[int],
     previous_zone: Optional[int],
     order_info: Dict[str, Any],
-    fill_info: Dict[str, Any],
+    last_fill_time: Optional[datetime],
     config: Dict[str, Any]
 ) -> List[TradingAction]:
     """
@@ -259,7 +259,6 @@ def _decide_symbol_actions_v2(
     # 从实时状态获取信息
     has_active_order = order_info.get("has_order", False)
     oldest_order_time = order_info.get("oldest_order_time")
-    latest_fill_time = fill_info.get("latest_fill_time")
 
     # 记录状态转换
     if zone != previous_zone:
@@ -327,8 +326,8 @@ def _decide_symbol_actions_v2(
         in_cooldown = False
         cooldown_remaining = 0
 
-        if latest_fill_time:
-            elapsed = (datetime.now() - latest_fill_time).total_seconds() / 60
+        if last_fill_time:
+            elapsed = (datetime.now() - last_fill_time).total_seconds() / 60
             in_cooldown = elapsed < config.cooldown_after_fill_minutes
             if in_cooldown:
                 cooldown_remaining = config.cooldown_after_fill_minutes - elapsed
@@ -347,13 +346,13 @@ def _decide_symbol_actions_v2(
                 )]
 
             # 有订单，检查是否需要调整
-            if current_zone is not None and zone > current_zone:
+            if previous_zone is not None and zone > previous_zone:
                 # Zone恶化，需要重新挂单
-                logger.info(f"{symbol}: 📈 Zone worsened during cooldown: {current_zone} → {zone}")
+                logger.info(f"{symbol}: 📈 Zone worsened during cooldown: {previous_zone} → {zone}")
                 actions.append(TradingAction(
                     type=ActionType.CANCEL_ORDER,
                     symbol=symbol,
-                    reason=f"Zone worsened: {current_zone} → {zone}"
+                    reason=f"Zone worsened: {previous_zone} → {zone}"
                 ))
                 actions.append(_create_limit_order_action(
                     symbol, offset, offset_usd, cost_basis, zone,

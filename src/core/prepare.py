@@ -11,7 +11,7 @@
 """
 import logging
 import asyncio
-from typing import Dict, Any, Tuple, List
+from typing import Dict, Any, Tuple, List, Optional
 from datetime import datetime, timedelta
 from utils.offset import calculate_offset_and_cost
 from utils.config import HedgeConfig
@@ -55,7 +55,7 @@ async def prepare_data(
 
     # 3.5 获取订单和成交状态（传入价格用于计算 previous_zone）
     order_status = await _fetch_order_status(exchange, symbols, prices, config)
-    fill_history = await _fetch_fill_history(exchange, symbols, config.cooldown_after_fill_minutes)
+    last_fill_times = await _fetch_last_fill_times(exchange, symbols, config.cooldown_after_fill_minutes)
 
     # 4. 计算偏移和成本（prepare 自己读写 cost_history）
     offsets = await _calculate_offsets(
@@ -76,7 +76,7 @@ async def prepare_data(
         "offsets": offsets,
         "zones": zones,  # 新增：包含 zone 和 previous_zone
         "order_status": order_status,
-        "fill_history": fill_history
+        "last_fill_times": last_fill_times  # {symbol: datetime or None}
     }
 
 
@@ -409,25 +409,19 @@ async def _fetch_order_status(
     return order_status
 
 
-async def _fetch_fill_history(exchange, symbols: List[str], cooldown_minutes: int) -> Dict[str, Dict]:
+async def _fetch_last_fill_times(exchange, symbols: List[str], cooldown_minutes: int) -> Dict[str, Optional[datetime]]:
     """
-    获取成交历史
+    获取最后成交时间（简化版）
 
     Returns:
-        {
-            "SOL": {
-                "has_recent_fill": bool,
-                "latest_fill_time": datetime or None,
-                "fills": [...]
-            },
-            ...
-        }
+        {symbol: datetime or None}
+        例如：{"SOL": datetime(...), "BTC": None, ...}
     """
     logger.info("=" * 50)
-    logger.info("📜 FETCHING FILL HISTORY")
+    logger.info("📜 FETCHING LAST FILL TIMES")
     logger.info("=" * 50)
 
-    fill_history = {}
+    last_fill_times = {}
 
     # 获取最近的成交记录（多查询5分钟以确保覆盖）
     try:
@@ -436,24 +430,17 @@ async def _fetch_fill_history(exchange, symbols: List[str], cooldown_minutes: in
         logger.error(f"Failed to fetch recent fills: {e}")
         recent_fills = []
 
-    # 按币种整理成交
+    # 按币种整理成交，只提取最后成交时间
     for symbol in symbols:
         symbol_fills = [f for f in recent_fills if f.get('symbol') == symbol]
 
         if symbol_fills:
             latest_fill = max(symbol_fills, key=lambda x: x.get('filled_at', datetime.min))
-            fill_history[symbol] = {
-                "has_recent_fill": True,
-                "latest_fill_time": latest_fill.get('filled_at'),
-                "fills": symbol_fills
-            }
-            logger.info(f"  • {symbol}: Last fill at {latest_fill.get('filled_at', 'unknown')}")
+            last_fill_time = latest_fill.get('filled_at')
+            last_fill_times[symbol] = last_fill_time
+            logger.info(f"  • {symbol}: Last fill at {last_fill_time}")
         else:
-            fill_history[symbol] = {
-                "has_recent_fill": False,
-                "latest_fill_time": None,
-                "fills": []
-            }
+            last_fill_times[symbol] = None
             logger.debug(f"  • {symbol}: No recent fills")
 
-    return fill_history
+    return last_fill_times

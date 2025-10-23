@@ -83,7 +83,6 @@ class TestEngineIntegration:
         """
         # 创建组件
         cost_history = {}  # {symbol: (offset, cost)}
-        zone_history = {}  # {symbol: zone}
         exchange = MockExchange(mock_config.to_dict()["exchange"])
 
         # 设置价格（调低，避免超阈值）
@@ -131,7 +130,7 @@ class TestEngineIntegration:
         assert 5.0 < sol_offset_usd < 20.0
 
         # === 步骤2: Decide ===
-        actions = await decide_actions(data, zone_history, mock_config)
+        actions = await decide_actions(data, mock_config)
 
         # 应该决定下限价单
         sol_actions = [a for a in actions if a.symbol == "SOL"]
@@ -144,16 +143,11 @@ class TestEngineIntegration:
             results = await execute_actions(
                 actions,
                 exchange,
-                zone_history,
                 AsyncMock()  # mock notifier
             )
 
             # 验证订单已下
             assert len(exchange.orders) > 0
-
-            # 验证 zone_history 已更新
-            assert "SOL" in zone_history
-            assert zone_history["SOL"] is not None
 
     @pytest.mark.asyncio
     async def test_zone_change_reorder(self, mock_config, mock_pool_data):
@@ -166,7 +160,6 @@ class TestEngineIntegration:
         3. 第二次循环：撤单，重新下单
         """
         cost_history = {}
-        zone_history = {}
         exchange = MockExchange(mock_config.to_dict()["exchange"])
         exchange.prices = {"SOL": 150.0}
 
@@ -182,11 +175,11 @@ class TestEngineIntegration:
 
         # === 第一次循环 ===
         data = await prepare_data(mock_config, pool_calculators, exchange, cost_history)
-        actions = await decide_actions(data, zone_history, mock_config)
-        await execute_actions(actions, exchange, zone_history, AsyncMock())
+        actions = await decide_actions(data, mock_config)
+        await execute_actions(actions, exchange, AsyncMock())
 
         # 记录第一次的zone
-        first_zone = zone_history.get("SOL")
+        first_zone = data["zones"]["SOL"]["zone"]
 
         # === 增加池子持仓，导致offset变大，zone恶化 ===
         async def mock_jlp_calculator_increased(amount):
@@ -195,8 +188,8 @@ class TestEngineIntegration:
         pool_calculators["jlp"] = mock_jlp_calculator_increased
 
         # === 第二次循环 ===
-        data = await prepare_data(mock_config, pool_calculators, exchange, state_manager)
-        actions = await decide_actions(data, state_manager, mock_config)
+        data = await prepare_data(mock_config, pool_calculators, exchange, cost_history)
+        actions = await decide_actions(data, mock_config)
 
         # 验证zone确实变化了
         sol_offset, _ = data["offsets"]["SOL"]
@@ -218,7 +211,7 @@ class TestEngineIntegration:
         2. 模拟时间流逝（超过timeout）
         3. 触发超时逻辑，市价平仓
         """
-        state_manager = StateManager()
+        cost_history = {}
         exchange = MockExchange(mock_config.to_dict()["exchange"])
         exchange.prices = {"SOL": 150.0}
 
@@ -232,9 +225,9 @@ class TestEngineIntegration:
         from core.execute import execute_actions
 
         # === 第一次循环：下限价单 ===
-        data = await prepare_data(mock_config, pool_calculators, exchange, state_manager)
-        actions = await decide_actions(data, state_manager, mock_config)
-        await execute_actions(actions, exchange, state_manager, AsyncMock(), data.get("state_updates"))
+        data = await prepare_data(mock_config, pool_calculators, exchange, cost_history)
+        actions = await decide_actions(data, mock_config)
+        await execute_actions(actions, exchange, AsyncMock())
 
         # === 修改exchange中订单的创建时间模拟超时 ===
         # 找到SOL的订单并修改其创建时间
@@ -242,16 +235,9 @@ class TestEngineIntegration:
             if order["symbol"] == "SOL" and order["status"] == "open":
                 order["created_at"] = datetime.now() - timedelta(minutes=25)  # 超时
 
-        # 保留current_zone信息
-        state_manager.update_symbol_state("SOL", {
-            "monitoring": {
-                "current_zone": 1
-            }
-        })
-
         # === 第二次循环：触发超时 ===
-        data = await prepare_data(mock_config, pool_calculators, exchange, state_manager)
-        actions = await decide_actions(data, state_manager, mock_config)
+        data = await prepare_data(mock_config, pool_calculators, exchange, cost_history)
+        actions = await decide_actions(data, mock_config)
 
         # 应该有撤单和市价单
         sol_actions = [a for a in actions if a.symbol == "SOL"]
@@ -263,7 +249,7 @@ class TestEngineIntegration:
         assert market_action.metadata["force_close"] is True
 
         # 执行
-        await execute_actions(actions, exchange, state_manager, AsyncMock(), data.get("state_updates"))
+        await execute_actions(actions, exchange, AsyncMock())
 
         # 验证市价单已成交
         market_orders = [o for o in exchange.orders.values()
@@ -280,12 +266,12 @@ class TestEngineIntegration:
         2. Zone改善
         3. 冷却期内不重新下单
         """
-        state_manager = StateManager()
+        cost_history = {}
         exchange = MockExchange(mock_config.to_dict()["exchange"])
         exchange.prices = {"SOL": 150.0}
 
         async def mock_jlp_calculator(amount):
-            return {"SOL": {"amount": 10.0}}
+            return {"SOL": {"amount": 0.06}}  # 0.06 * 150 = 9 USD
 
         pool_calculators = {"jlp": mock_jlp_calculator, "alp": AsyncMock(return_value={})}
 
@@ -293,18 +279,19 @@ class TestEngineIntegration:
         from core.decide import decide_actions
         from core.execute import execute_actions
 
-        # === 模拟刚刚成交，设置last_fill_time ===
-        state_manager.update_symbol_state("SOL", {
-            "last_fill_time": datetime.now() - timedelta(minutes=2),  # 2分钟前成交
-            "monitoring": {
-                "current_zone": 2,
-                "started_at": None
+        # === 模拟成交记录（2分钟前成交） ===
+        exchange.fills = [
+            {
+                "symbol": "SOL",
+                "filled_at": datetime.now() - timedelta(minutes=2),
+                "side": "sell",
+                "size": 0.5
             }
-        })
+        ]
 
-        # === 价格改善，zone变为1 ===
-        data = await prepare_data(mock_config, pool_calculators, exchange, state_manager)
-        actions = await decide_actions(data, state_manager, mock_config)
+        # === 第一次循环：冷却期内 ===
+        data = await prepare_data(mock_config, pool_calculators, exchange, cost_history)
+        actions = await decide_actions(data, mock_config)
 
         # 冷却期内zone改善，应该skip
         sol_actions = [a for a in actions if a.symbol == "SOL"]
@@ -324,7 +311,7 @@ class TestEngineIntegration:
         - 每个symbol独立决策
         - 状态管理正确隔离
         """
-        state_manager = StateManager()
+        cost_history = {}
         exchange = MockExchange(mock_config.to_dict()["exchange"])
         exchange.prices = {"SOL": 150.0, "BTC": 60000.0, "ETH": 3500.0}
 
@@ -341,7 +328,7 @@ class TestEngineIntegration:
         from core.decide import decide_actions
 
         # 准备数据
-        data = await prepare_data(mock_config, pool_calculators, exchange, state_manager)
+        data = await prepare_data(mock_config, pool_calculators, exchange, cost_history)
 
         # 验证所有symbol都被处理
         assert len(data["symbols"]) == 3
@@ -350,66 +337,13 @@ class TestEngineIntegration:
         assert "ETH" in data["symbols"]
 
         # 决策
-        actions = await decide_actions(data, state_manager, mock_config)
+        actions = await decide_actions(data, mock_config)
 
         # 验证每个symbol都有决策
         symbols_with_actions = set(a.symbol for a in actions)
         assert "SOL" in symbols_with_actions
         assert "BTC" in symbols_with_actions
         assert "ETH" in symbols_with_actions
-
-
-class TestStateManagement:
-    """状态管理测试"""
-
-    def test_state_isolation(self):
-        """测试不同symbol的状态隔离"""
-        state_manager = StateManager()
-
-        # 更新SOL状态
-        state_manager.update_symbol_state("SOL", {
-            "offset": 10.0,
-            "cost_basis": 150.0
-        })
-
-        # 更新BTC状态
-        state_manager.update_symbol_state("BTC", {
-            "offset": -0.05,
-            "cost_basis": 60000.0
-        })
-
-        # 验证隔离
-        sol_state = state_manager.get_symbol_state("SOL")
-        btc_state = state_manager.get_symbol_state("BTC")
-
-        assert sol_state["offset"] == 10.0
-        assert btc_state["offset"] == -0.05
-        assert sol_state["offset"] != btc_state["offset"]
-
-    def test_state_deep_merge(self):
-        """测试状态深度合并"""
-        state_manager = StateManager()
-
-        # 初始状态
-        state_manager.update_symbol_state("SOL", {
-            "offset": 10.0,
-            "monitoring": {
-                "current_zone": 1
-            }
-        })
-
-        # 部分更新（只更新monitoring.started_at）
-        state_manager.update_symbol_state("SOL", {
-            "monitoring": {
-                "started_at": datetime.now()
-            }
-        })
-
-        # 验证合并结果
-        state = state_manager.get_symbol_state("SOL")
-        assert state["offset"] == 10.0  # 保留
-        assert state["monitoring"]["current_zone"] == 1  # 保留
-        assert state["monitoring"]["started_at"] is not None  # 新增
 
 
 if __name__ == "__main__":

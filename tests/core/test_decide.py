@@ -16,8 +16,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / 'src'))
 import pytest
 from datetime import datetime, timedelta
 from core.decide import (
-    _calculate_zone,
-    _decide_symbol_actions,
+    calculate_zone,
+    _decide_symbol_actions_v2,
     ActionType
 )
 from utils.config import HedgeConfig
@@ -37,12 +37,23 @@ def mock_config():
     )
 
 
+def create_order_info(has_order=False, oldest_order_time=None, previous_zone=None):
+    """辅助函数：创建 order_info 字典"""
+    return {
+        "has_order": has_order,
+        "oldest_order_time": oldest_order_time,
+        "order_count": 1 if has_order else 0,
+        "orders": [],
+        "previous_zone": previous_zone
+    }
+
+
 class TestZoneCalculation:
     """测试Zone计算逻辑"""
 
     def test_below_min_threshold(self, mock_config):
         """低于最小阈值 → None"""
-        zone = _calculate_zone(
+        zone = calculate_zone(
             offset_usd=3.0,
             min_threshold=5.0,
             max_threshold=20.0,
@@ -52,7 +63,7 @@ class TestZoneCalculation:
 
     def test_at_min_threshold(self, mock_config):
         """刚好到最小阈值 → Zone 0"""
-        zone = _calculate_zone(
+        zone = calculate_zone(
             offset_usd=5.0,
             min_threshold=5.0,
             max_threshold=20.0,
@@ -63,17 +74,17 @@ class TestZoneCalculation:
     def test_between_thresholds(self, mock_config):
         """在阈值之间 → 计算zone编号"""
         # 5.0 - 7.5 → Zone 0
-        assert _calculate_zone(7.0, 5.0, 20.0, 2.5) == 0
+        assert calculate_zone(7.0, 5.0, 20.0, 2.5) == 0
 
         # 7.5 - 10.0 → Zone 1
-        assert _calculate_zone(8.0, 5.0, 20.0, 2.5) == 1
+        assert calculate_zone(8.0, 5.0, 20.0, 2.5) == 1
 
         # 10.0 - 12.5 → Zone 2
-        assert _calculate_zone(11.0, 5.0, 20.0, 2.5) == 2
+        assert calculate_zone(11.0, 5.0, 20.0, 2.5) == 2
 
     def test_at_max_threshold(self, mock_config):
         """刚好到最大阈值 → Zone 6"""
-        zone = _calculate_zone(
+        zone = calculate_zone(
             offset_usd=20.0,
             min_threshold=5.0,
             max_threshold=20.0,
@@ -83,7 +94,7 @@ class TestZoneCalculation:
 
     def test_above_max_threshold(self, mock_config):
         """超过最大阈值 → -1 (警报)"""
-        zone = _calculate_zone(
+        zone = calculate_zone(
             offset_usd=25.0,
             min_threshold=5.0,
             max_threshold=20.0,
@@ -93,7 +104,7 @@ class TestZoneCalculation:
 
     def test_negative_offset(self, mock_config):
         """负值偏移也应该正确计算（取绝对值）"""
-        zone = _calculate_zone(
+        zone = calculate_zone(
             offset_usd=-8.0,
             min_threshold=5.0,
             max_threshold=20.0,
@@ -107,22 +118,19 @@ class TestCooldownLogic:
 
     def test_cooldown_no_order(self, mock_config):
         """冷却期内，无订单 → NO_ACTION（等待冷却）"""
-        state = {
-            "monitoring": {
-                "started_at": None,  # 无订单
-                "current_zone": 1
-            },
-            "last_fill_time": datetime.now() - timedelta(minutes=2)  # 冷却期内
-        }
+        order_info = create_order_info(has_order=False, previous_zone=1)
+        last_fill_time = datetime.now() - timedelta(minutes=2)  # 冷却期内
 
-        actions = _decide_symbol_actions(
+        actions = _decide_symbol_actions_v2(
             symbol="SOL",
             offset=1.0,
             cost_basis=150.0,
             current_price=150.0,
             offset_usd=150.0,
             zone=1,  # 有敞口
-            state=state,
+            previous_zone=1,
+            order_info=order_info,
+            last_fill_time=last_fill_time,
             config=mock_config
         )
 
@@ -132,22 +140,23 @@ class TestCooldownLogic:
 
     def test_cooldown_zone_worsened_with_order(self, mock_config):
         """冷却期内，有订单，zone恶化 → CANCEL_ORDER + PLACE_LIMIT_ORDER"""
-        state = {
-            "monitoring": {
-                "started_at": datetime.now() - timedelta(minutes=3),  # 有订单
-                "current_zone": 1
-            },
-            "last_fill_time": datetime.now() - timedelta(minutes=2)  # 冷却期内
-        }
+        order_info = create_order_info(
+            has_order=True,
+            oldest_order_time=datetime.now() - timedelta(minutes=3),
+            previous_zone=1
+        )
+        last_fill_time = datetime.now() - timedelta(minutes=2)  # 冷却期内
 
-        actions = _decide_symbol_actions(
+        actions = _decide_symbol_actions_v2(
             symbol="SOL",
             offset=2.0,
             cost_basis=150.0,
             current_price=150.0,
             offset_usd=300.0,
             zone=2,  # Zone恶化（1→2）
-            state=state,
+            previous_zone=1,
+            order_info=order_info,
+            last_fill_time=last_fill_time,
             config=mock_config
         )
 
@@ -158,22 +167,23 @@ class TestCooldownLogic:
 
     def test_cooldown_zone_improved_with_order(self, mock_config):
         """冷却期内，有订单，zone改善 → NO_ACTION（保持订单）"""
-        state = {
-            "monitoring": {
-                "started_at": datetime.now() - timedelta(minutes=3),  # 有订单
-                "current_zone": 2
-            },
-            "last_fill_time": datetime.now() - timedelta(minutes=2)  # 冷却期内
-        }
+        order_info = create_order_info(
+            has_order=True,
+            oldest_order_time=datetime.now() - timedelta(minutes=3),
+            previous_zone=2
+        )
+        last_fill_time = datetime.now() - timedelta(minutes=2)  # 冷却期内
 
-        actions = _decide_symbol_actions(
+        actions = _decide_symbol_actions_v2(
             symbol="SOL",
             offset=1.0,
             cost_basis=150.0,
             current_price=150.0,
             offset_usd=150.0,
             zone=1,  # Zone改善（2→1）
-            state=state,
+            previous_zone=2,
+            order_info=order_info,
+            last_fill_time=last_fill_time,
             config=mock_config
         )
 
@@ -183,22 +193,19 @@ class TestCooldownLogic:
 
     def test_non_cooldown_no_order(self, mock_config):
         """非冷却期，无订单 → PLACE_LIMIT_ORDER"""
-        state = {
-            "monitoring": {
-                "started_at": None,  # 无订单
-                "current_zone": None
-            },
-            "last_fill_time": datetime.now() - timedelta(minutes=10)  # 冷却期已过
-        }
+        order_info = create_order_info(has_order=False, previous_zone=None)
+        last_fill_time = datetime.now() - timedelta(minutes=10)  # 冷却期已过
 
-        actions = _decide_symbol_actions(
+        actions = _decide_symbol_actions_v2(
             symbol="SOL",
             offset=1.0,
             cost_basis=150.0,
             current_price=150.0,
             offset_usd=150.0,
             zone=1,  # 有敞口
-            state=state,
+            previous_zone=None,
+            order_info=order_info,
+            last_fill_time=last_fill_time,
             config=mock_config
         )
 
@@ -215,22 +222,23 @@ class TestDecisionLogic:
     def test_zone_unchanged_but_has_exposure(self, mock_config):
         """关键测试：zone不变但有敞口，仍会评估和管理订单"""
         # 场景1：冷却期内，zone不变，有订单 → 保持订单
-        state = {
-            "monitoring": {
-                "started_at": datetime.now() - timedelta(minutes=3),  # 有订单
-                "current_zone": 1
-            },
-            "last_fill_time": datetime.now() - timedelta(minutes=2)  # 冷却期内
-        }
+        order_info = create_order_info(
+            has_order=True,
+            oldest_order_time=datetime.now() - timedelta(minutes=3),
+            previous_zone=1
+        )
+        last_fill_time = datetime.now() - timedelta(minutes=2)  # 冷却期内
 
-        actions = _decide_symbol_actions(
+        actions = _decide_symbol_actions_v2(
             symbol="SOL",
             offset=1.0,
             cost_basis=150.0,
             current_price=150.0,
             offset_usd=150.0,
             zone=1,  # Zone 不变，但有敞口
-            state=state,
+            previous_zone=1,
+            order_info=order_info,
+            last_fill_time=last_fill_time,
             config=mock_config
         )
 
@@ -240,22 +248,19 @@ class TestDecisionLogic:
         assert "cooldown" in actions[0].reason.lower()
 
         # 场景2：非冷却期，zone不变，无订单 → 挂新单
-        state = {
-            "monitoring": {
-                "started_at": None,  # 无订单
-                "current_zone": 1
-            },
-            "last_fill_time": datetime.now() - timedelta(minutes=10)  # 已过冷却期
-        }
+        order_info = create_order_info(has_order=False, previous_zone=1)
+        last_fill_time = datetime.now() - timedelta(minutes=10)  # 已过冷却期
 
-        actions = _decide_symbol_actions(
+        actions = _decide_symbol_actions_v2(
             symbol="SOL",
             offset=1.0,
             cost_basis=150.0,
             current_price=150.0,
             offset_usd=150.0,
             zone=1,  # Zone 不变，但有敞口
-            state=state,
+            previous_zone=1,
+            order_info=order_info,
+            last_fill_time=last_fill_time,
             config=mock_config
         )
 
@@ -265,21 +270,18 @@ class TestDecisionLogic:
 
     def test_threshold_exceeded(self, mock_config):
         """超过最大阈值 → ALERT + CANCEL_ORDER"""
-        state = {
-            "monitoring": {
-                "started_at": datetime.now(),
-                "current_zone": None
-            }
-        }
+        order_info = create_order_info(has_order=True, oldest_order_time=datetime.now())
 
-        actions = _decide_symbol_actions(
+        actions = _decide_symbol_actions_v2(
             symbol="SOL",
             offset=15.0,
             cost_basis=150.0,
             current_price=150.0,
             offset_usd=2250.0,  # 超过20.0
             zone=-1,
-            state=state,
+            previous_zone=None,
+            order_info=order_info,
+            last_fill_time=None,
             config=mock_config
         )
 
@@ -289,21 +291,22 @@ class TestDecisionLogic:
 
     def test_timeout_triggered(self, mock_config):
         """订单超时 → CANCEL_ORDER + PLACE_MARKET_ORDER"""
-        state = {
-            "monitoring": {
-                "started_at": datetime.now() - timedelta(minutes=25),  # 超时
-                "current_zone": 1
-            }
-        }
+        order_info = create_order_info(
+            has_order=True,
+            oldest_order_time=datetime.now() - timedelta(minutes=25),
+            previous_zone=1
+        )
 
-        actions = _decide_symbol_actions(
+        actions = _decide_symbol_actions_v2(
             symbol="SOL",
             offset=1.0,
             cost_basis=150.0,
             current_price=150.0,
             offset_usd=150.0,
             zone=1,
-            state=state,
+            previous_zone=1,
+            order_info=order_info,
+            last_fill_time=None,
             config=mock_config
         )
 
@@ -314,21 +317,18 @@ class TestDecisionLogic:
 
     def test_enter_new_zone(self, mock_config):
         """进入新zone（无活跃订单） → PLACE_LIMIT_ORDER"""
-        state = {
-            "monitoring": {
-                "started_at": None,  # 无活跃订单
-                "current_zone": None
-            }
-        }
+        order_info = create_order_info(has_order=False)
 
-        actions = _decide_symbol_actions(
+        actions = _decide_symbol_actions_v2(
             symbol="SOL",
             offset=1.0,
             cost_basis=150.0,
             current_price=150.0,
             offset_usd=8.0,  # Zone 1
             zone=1,
-            state=state,
+            previous_zone=None,
+            order_info=order_info,
+            last_fill_time=None,
             config=mock_config
         )
 
@@ -339,21 +339,22 @@ class TestDecisionLogic:
 
     def test_back_within_threshold(self, mock_config):
         """回到阈值内（有活跃订单） → CANCEL_ORDER"""
-        state = {
-            "monitoring": {
-                "started_at": datetime.now(),  # 有活跃订单
-                "current_zone": 1
-            }
-        }
+        order_info = create_order_info(
+            has_order=True,
+            oldest_order_time=datetime.now(),
+            previous_zone=1
+        )
 
-        actions = _decide_symbol_actions(
+        actions = _decide_symbol_actions_v2(
             symbol="SOL",
             offset=0.02,
             cost_basis=150.0,
             current_price=150.0,
             offset_usd=3.0,  # 低于5.0
             zone=None,  # 回到安全区
-            state=state,
+            previous_zone=1,
+            order_info=order_info,
+            last_fill_time=None,
             config=mock_config
         )
 
@@ -364,22 +365,22 @@ class TestDecisionLogic:
 
     def test_non_cooldown_with_order(self, mock_config):
         """非冷却期但有订单（正常状态） → NO_ACTION (保持订单)"""
-        state = {
-            "monitoring": {
-                "started_at": datetime.now() - timedelta(minutes=5),  # 有活跃订单
-                "current_zone": 1
-            }
-            # 无 last_fill_time 或已过冷却期
-        }
+        order_info = create_order_info(
+            has_order=True,
+            oldest_order_time=datetime.now() - timedelta(minutes=5),
+            previous_zone=1
+        )
 
-        actions = _decide_symbol_actions(
+        actions = _decide_symbol_actions_v2(
             symbol="SOL",
             offset=1.0,
             cost_basis=150.0,
             current_price=150.0,
             offset_usd=8.0,  # Zone 1
             zone=1,
-            state=state,
+            previous_zone=1,
+            order_info=order_info,
+            last_fill_time=None,
             config=mock_config
         )
 
@@ -390,22 +391,23 @@ class TestDecisionLogic:
 
     def test_cooldown_zone_worsened(self, mock_config):
         """冷却期内zone恶化 → CANCEL_ORDER + PLACE_LIMIT_ORDER (in_cooldown=True)"""
-        state = {
-            "monitoring": {
-                "started_at": datetime.now() - timedelta(minutes=3),
-                "current_zone": 1
-            },
-            "last_fill_time": datetime.now() - timedelta(minutes=2)  # 冷却期内
-        }
+        order_info = create_order_info(
+            has_order=True,
+            oldest_order_time=datetime.now() - timedelta(minutes=3),
+            previous_zone=1
+        )
+        last_fill_time = datetime.now() - timedelta(minutes=2)
 
-        actions = _decide_symbol_actions(
+        actions = _decide_symbol_actions_v2(
             symbol="SOL",
             offset=2.0,
             cost_basis=150.0,
             current_price=150.0,
             offset_usd=300.0,  # Zone 2（恶化）
             zone=2,
-            state=state,
+            previous_zone=1,
+            order_info=order_info,
+            last_fill_time=last_fill_time,
             config=mock_config
         )
 
@@ -420,21 +422,18 @@ class TestLimitOrderCalculation:
 
     def test_long_offset_sell_order(self, mock_config):
         """多头敞口 → 卖出订单，挂高价"""
-        state = {
-            "monitoring": {
-                "started_at": None,  # 无活跃订单
-                "current_zone": None
-            }
-        }
+        order_info = create_order_info(has_order=False)
 
-        actions = _decide_symbol_actions(
+        actions = _decide_symbol_actions_v2(
             symbol="SOL",
             offset=1.0,  # 多头
             cost_basis=100.0,
             current_price=105.0,
             offset_usd=105.0,
             zone=1,
-            state=state,
+            previous_zone=None,
+            order_info=order_info,
+            last_fill_time=None,
             config=mock_config
         )
 
@@ -448,21 +447,18 @@ class TestLimitOrderCalculation:
 
     def test_short_offset_buy_order(self, mock_config):
         """空头敞口 → 买入订单，挂低价"""
-        state = {
-            "monitoring": {
-                "started_at": None,  # 无活跃订单
-                "current_zone": None
-            }
-        }
+        order_info = create_order_info(has_order=False)
 
-        actions = _decide_symbol_actions(
+        actions = _decide_symbol_actions_v2(
             symbol="SOL",
             offset=-1.0,  # 空头
             cost_basis=100.0,
             current_price=95.0,
             offset_usd=95.0,
             zone=1,
-            state=state,
+            previous_zone=None,
+            order_info=order_info,
+            last_fill_time=None,
             config=mock_config
         )
 
