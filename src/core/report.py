@@ -70,8 +70,10 @@ async def _generate_console_report(data: Dict[str, Any], state_manager):
         logger.info(f"    • Offset: {offset:+.4f} (${offset_usd:.2f})")
         logger.info(f"    • Cost: ${cost_basis:.2f}")
 
-        if monitoring.get("started_at"):
-            logger.info(f"    • Monitoring: zone {monitoring.get('current_zone')}")
+        # 检查是否有活跃订单（从传入的data获取）
+        order_info = data.get("order_status", {}).get(symbol, {})
+        if order_info.get("has_order"):
+            logger.info(f"    • Monitoring: zone {monitoring.get('current_zone')} ({order_info.get('order_count', 0)} orders)")
 
     logger.info(f"  📊 Total Exposure: ${total_offset_usd:.2f}")
 

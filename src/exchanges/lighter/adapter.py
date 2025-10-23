@@ -3,6 +3,7 @@
 Lighter Exchange Adapter - 实现 ExchangeInterface
 """
 
+from datetime import datetime, timedelta
 from ..interface import ExchangeInterface
 from .orders import LighterOrderManager
 
@@ -35,6 +36,8 @@ class LighterExchange(ExchangeInterface):
 
         # Track order IDs per symbol for cancellation
         self.order_map = {}  # {order_id: (symbol, market_id)}
+        # Track detailed order info for query
+        self.order_details = {}  # {order_id: order_info}
 
     def _get_market_id(self, symbol: str) -> str:
         """Convert symbol to Lighter market symbol"""
@@ -71,6 +74,21 @@ class LighterExchange(ExchangeInterface):
 
         # Store mapping for cancellation
         self.order_map[order_id] = (symbol, lighter_symbol)
+
+        # Store order details for query
+        now = datetime.now()
+        self.order_details[order_id] = {
+            "order_id": order_id,
+            "symbol": symbol,
+            "side": side,
+            "size": size,
+            "price": price,
+            "filled_size": 0.0,
+            "status": "open",
+            "created_at": now,
+            "updated_at": now
+        }
+
         return order_id
 
     async def place_market_order(
@@ -89,6 +107,23 @@ class LighterExchange(ExchangeInterface):
 
         # Store mapping for cancellation
         self.order_map[order_id] = (symbol, lighter_symbol)
+
+        # Store order details - market orders are immediately filled
+        now = datetime.now()
+        current_price = await self.lighter_client.get_price(lighter_symbol)
+        self.order_details[order_id] = {
+            "order_id": order_id,
+            "symbol": symbol,
+            "side": side,
+            "size": size,
+            "price": current_price,
+            "filled_size": size,
+            "status": "filled",
+            "created_at": now,
+            "updated_at": now,
+            "filled_at": now
+        }
+
         return order_id
 
     async def cancel_order(self, order_id: str) -> bool:
@@ -103,6 +138,10 @@ class LighterExchange(ExchangeInterface):
 
         if success:
             del self.order_map[order_id]
+            # Update order status
+            if order_id in self.order_details:
+                self.order_details[order_id]["status"] = "cancelled"
+                self.order_details[order_id]["updated_at"] = datetime.now()
 
         return success
 
@@ -129,6 +168,10 @@ class LighterExchange(ExchangeInterface):
                 success = await self.lighter_client.cancel_order(lighter_symbol, order_id)
                 if success:
                     del self.order_map[order_id]
+                    # Update order status
+                    if order_id in self.order_details:
+                        self.order_details[order_id]["status"] = "cancelled"
+                        self.order_details[order_id]["updated_at"] = datetime.now()
                     canceled_count += 1
                     logger.info(f"[Lighter] Successfully canceled order {order_id}")
                 else:
@@ -139,3 +182,48 @@ class LighterExchange(ExchangeInterface):
 
         logger.info(f"[Lighter] cancel_all_orders({symbol}): canceled {canceled_count}/{len(orders_to_cancel)} orders")
         return canceled_count
+
+    async def get_open_orders(self, symbol: str = None) -> list:
+        """
+        获取活跃订单
+
+        注：当前版本使用本地缓存的订单信息
+        未来可以通过AccountApi查询真实订单状态
+        """
+        open_orders = []
+
+        # 使用本地维护的订单详情
+        # TODO: 未来可以使用self.lighter_client.account_api查询真实订单
+        for order_id, details in self.order_details.items():
+            if details["status"] == "open":
+                if symbol is None or details["symbol"] == symbol:
+                    open_orders.append(details.copy())
+
+        return open_orders
+
+    async def get_recent_fills(self, symbol: str = None, minutes_back: int = 10) -> list:
+        """
+        获取最近成交记录
+
+        注：当前版本通过本地缓存查找成交订单
+        未来可以通过AccountApi查询真实成交历史
+        """
+        recent_fills = []
+        cutoff_time = datetime.now() - timedelta(minutes=minutes_back)
+
+        # 使用本地维护的订单详情找已成交订单
+        # TODO: 未来可以使用self.lighter_client.account_api.get_fills()等API
+        for order_id, details in self.order_details.items():
+            if details["status"] == "filled" and "filled_at" in details:
+                if details["filled_at"] >= cutoff_time:
+                    if symbol is None or details["symbol"] == symbol:
+                        recent_fills.append({
+                            "order_id": order_id,
+                            "symbol": details["symbol"],
+                            "side": details["side"],
+                            "filled_size": details["filled_size"],
+                            "filled_price": details["price"],
+                            "filled_at": details["filled_at"]
+                        })
+
+        return recent_fills

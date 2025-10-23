@@ -154,7 +154,7 @@ class TestEngineIntegration:
 
             # 验证状态已更新
             sol_state = state_manager.get_symbol_state("SOL")
-            assert sol_state["monitoring"]["started_at"] is not None
+            # started_at已移除 - 现在从交易所查询订单状态
             assert sol_state["monitoring"]["current_zone"] is not None
 
     @pytest.mark.asyncio
@@ -238,11 +238,16 @@ class TestEngineIntegration:
         actions = await decide_actions(data, state_manager, mock_config)
         await execute_actions(actions, exchange, state_manager, AsyncMock(), data.get("state_updates"))
 
-        # === 手动设置started_at为25分钟前（超时），并设置current_zone ===
+        # === 修改exchange中订单的创建时间模拟超时 ===
+        # 找到SOL的订单并修改其创建时间
+        for order_id, order in exchange.orders.items():
+            if order["symbol"] == "SOL" and order["status"] == "open":
+                order["created_at"] = datetime.now() - timedelta(minutes=25)  # 超时
+
+        # 保留current_zone信息
         state_manager.update_symbol_state("SOL", {
             "monitoring": {
-                "started_at": datetime.now() - timedelta(minutes=25),
-                "current_zone": 1  # 保留zone信息
+                "current_zone": 1
             }
         })
 

@@ -66,12 +66,10 @@ async def execute_actions(
                 state_manager.update_symbol_state(symbol, symbol_state_update)
                 logger.debug(f"  • {symbol}: {symbol_state_update}")
 
-            # 如果检测到持仓变化（成交），更新 last_fill_time
+            # 如果检测到持仓变化（成交），记录日志
+            # 注：last_fill_time已移除，现在从交易所查询成交历史
             if updates.get("position_changed"):
-                state_manager.update_symbol_state(symbol, {
-                    "last_fill_time": datetime.now()
-                })
-                logger.info(f"  🔔 {symbol}: Fill detected, updated last_fill_time")
+                logger.info(f"  🔔 {symbol}: Position change detected (fill occurred)")
 
     if not actions:
         logger.info("No actions to execute")
@@ -153,11 +151,11 @@ async def _execute_limit_order(
 
     logger.info(f"✅ Limit order placed: {action.symbol} (ID: {order_id})")
 
-    # 更新状态
+    # 更新状态（只更新current_zone，不再维护started_at）
     state_manager.update_symbol_state(action.symbol, {
         "monitoring": {
-            "current_zone": action.metadata.get("zone"),
-            "started_at": datetime.now()
+            "current_zone": action.metadata.get("zone")
+            # started_at已移除 - 从交易所查询订单状态
         }
     })
 
@@ -196,13 +194,13 @@ async def _execute_market_order(
             action.side
         )
 
-    # 清除监控状态 + 更新最后成交时间（用于冷却期）
+    # 清除监控状态（不再维护started_at和last_fill_time）
     state_manager.update_symbol_state(action.symbol, {
         "monitoring": {
-            "started_at": None
-            # current_zone 保留用于 cooldown 判断
-        },
-        "last_fill_time": datetime.now()
+            # started_at已移除 - 从交易所查询订单状态
+            # current_zone 保留用于 zone 对比
+        }
+        # last_fill_time已移除 - 从交易所查询成交历史
     })
 
     return order_id
@@ -230,7 +228,7 @@ async def _execute_cancel_order(
         # 清除监控状态（保留 current_zone 用于下一轮 zone 对比）
         state_manager.update_symbol_state(action.symbol, {
             "monitoring": {
-                "started_at": None
+                # started_at已移除 - 从交易所查询订单状态
                 # current_zone 保留，用于判断下一轮 zone 是否变化
             }
         })

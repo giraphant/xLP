@@ -49,8 +49,9 @@ class StateManager:
             "cost_basis": 0.0,
             "last_updated": None,
             "monitoring": {
-                "started_at": None,
-                "current_zone": None
+                # started_at已移除 - 从交易所查询订单状态
+                # last_fill_time已移除 - 从交易所查询成交历史
+                "current_zone": None  # 保留用于zone对比
             }
         }
 

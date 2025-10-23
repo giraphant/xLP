@@ -117,3 +117,47 @@ class ExchangeInterface(ABC):
             取消的订单数量
         """
         pass
+
+    @abstractmethod
+    async def get_open_orders(self, symbol: str = None) -> list:
+        """
+        获取活跃订单
+
+        Args:
+            symbol: 币种符号，如果为None则返回所有
+
+        Returns:
+            订单列表 [{
+                "order_id": str,
+                "symbol": str,
+                "side": str,  # "buy" or "sell"
+                "size": float,
+                "price": float,
+                "filled_size": float,
+                "status": str,  # "open", "filled", "cancelled"
+                "created_at": datetime,
+                "updated_at": datetime
+            }]
+        """
+        pass
+
+    @abstractmethod
+    async def get_recent_fills(self, symbol: str = None, minutes_back: int = 10) -> list:
+        """
+        获取最近成交记录
+
+        Args:
+            symbol: 币种符号，如果为None则返回所有
+            minutes_back: 查询多少分钟内的成交
+
+        Returns:
+            成交列表 [{
+                "order_id": str,
+                "symbol": str,
+                "side": str,
+                "filled_size": float,
+                "filled_price": float,
+                "filled_at": datetime
+            }]
+        """
+        pass
