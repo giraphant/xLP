@@ -330,18 +330,14 @@ def _decide_symbol_actions(
                 logger.info(f"{symbol}: Placing {action.side} order for {action.size:.4f} @ ${action.price:.2f}")
                 return [action]
             else:
-                # 这种情况理论上不该出现（非冷却期+有订单）
-                logger.error(f"{symbol}: ❌ Unexpected state: not in cooldown but has order")
-                actions.append(TradingAction(
-                    type=ActionType.CANCEL_ORDER,
+                # 非冷却期+有订单：正常状态，订单继续挂着
+                logger.debug(f"{symbol}: Order active in zone {zone}, maintaining")
+                return [TradingAction(
+                    type=ActionType.NO_ACTION,
                     symbol=symbol,
-                    reason="Unexpected state cleanup"
-                ))
-                actions.append(_create_limit_order_action(
-                    symbol, offset, offset_usd, cost_basis, zone,
-                    f"Recovery from unexpected state", config
-                ))
-                return actions
+                    reason=f"Maintaining order in zone {zone}",
+                    metadata={"zone": zone, "has_order": True}
+                )]
 
     # ========== 决策4: 无敞口 - 清理状态 ==========
     if zone is None:

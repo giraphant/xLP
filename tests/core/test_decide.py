@@ -362,8 +362,8 @@ class TestDecisionLogic:
         assert actions[0].type == ActionType.CANCEL_ORDER
         assert "threshold" in actions[0].reason.lower()
 
-    def test_unexpected_state_recovery(self, mock_config):
-        """非冷却期但有订单（异常状态） → CANCEL_ORDER + PLACE_LIMIT_ORDER"""
+    def test_non_cooldown_with_order(self, mock_config):
+        """非冷却期但有订单（正常状态） → NO_ACTION (保持订单)"""
         state = {
             "monitoring": {
                 "started_at": datetime.now() - timedelta(minutes=5),  # 有活跃订单
@@ -383,12 +383,10 @@ class TestDecisionLogic:
             config=mock_config
         )
 
-        # 异常状态恢复：取消旧订单，挂新订单
-        assert len(actions) == 2
-        assert actions[0].type == ActionType.CANCEL_ORDER
-        assert actions[0].reason == "Unexpected state cleanup"
-        assert actions[1].type == ActionType.PLACE_LIMIT_ORDER
-        assert "unexpected" in actions[1].reason.lower()
+        # 正常状态：保持订单
+        assert len(actions) == 1
+        assert actions[0].type == ActionType.NO_ACTION
+        assert "maintaining" in actions[0].reason.lower()
 
     def test_cooldown_zone_worsened(self, mock_config):
         """冷却期内zone恶化 → CANCEL_ORDER + PLACE_LIMIT_ORDER (in_cooldown=True)"""
