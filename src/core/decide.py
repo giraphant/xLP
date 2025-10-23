@@ -171,11 +171,12 @@ def _decide_symbol_actions_v2(
     - 使用从交易所查询的成交历史
     - previous_zone 从订单信息实时计算，不依赖本地状态
 
-    状态机：
+    决策树（按优先级）：
     1. 超阈值 → 警报退出
     2. 超时 → 强制平仓
-    3. 有敞口(zone is not None) → 订单管理
-    4. 无敞口(zone is None) → 清理状态
+    3. Zone恶化 → 强制重新下单
+    4. 有敞口 → 订单管理（检查冷却期）
+    5. 无敞口 → 清理状态
     """
     actions = []
 
@@ -243,7 +244,21 @@ def _decide_symbol_actions_v2(
             ))
             return actions
 
-    # ========== 决策3: 有敞口 - 管理订单 ==========
+    # ========== 决策3: Zone恶化强制重新下单 ==========
+    if has_active_order and previous_zone is not None and zone is not None and zone > previous_zone:
+        logger.info(f"{symbol}: 📈 Zone worsened: {previous_zone} → {zone}, forcing re-order")
+        actions.append(TradingAction(
+            type=ActionType.CANCEL_ORDER,
+            symbol=symbol,
+            reason=f"Zone worsened: {previous_zone} → {zone}"
+        ))
+        actions.append(_create_limit_order_action(
+            symbol, offset, offset_usd, cost_basis, zone,
+            f"Re-order due to zone worsening", config
+        ))
+        return actions
+
+    # ========== 决策4: 有敞口 - 订单管理 ==========
     if zone is not None:
         # 检查冷却期（使用实时成交时间）
         in_cooldown = False
@@ -256,65 +271,37 @@ def _decide_symbol_actions_v2(
                 cooldown_remaining = config.cooldown_after_fill_minutes - elapsed
                 logger.debug(f"{symbol}: In cooldown ({elapsed:.1f}/{config.cooldown_after_fill_minutes} min)")
 
-        # 冷却期逻辑
+        # 冷却期：保持现状（避免触发下单）
         if in_cooldown:
-            if not has_active_order:
-                # 刚成交，等待冷却
-                logger.info(f"{symbol}: 🧊 Cooling down after fill ({cooldown_remaining:.1f} min remaining)")
-                return [TradingAction(
-                    type=ActionType.NO_ACTION,
-                    symbol=symbol,
-                    reason=f"Waiting in cooldown period ({cooldown_remaining:.1f} min remaining)",
-                    metadata={"in_cooldown": True, "cooldown_remaining": cooldown_remaining}
-                )]
+            reason = f"Cooling down ({cooldown_remaining:.1f} min remaining)" if not has_active_order else f"Maintaining order in cooldown (zone: {zone})"
+            logger.info(f"{symbol}: 🧊 {reason}")
+            return [TradingAction(
+                type=ActionType.NO_ACTION,
+                symbol=symbol,
+                reason=reason,
+                metadata={"in_cooldown": True, "zone": zone, "has_order": has_active_order}
+            )]
 
-            # 有订单，检查是否需要调整
-            if previous_zone is not None and zone > previous_zone:
-                # Zone恶化，需要重新挂单
-                logger.info(f"{symbol}: 📈 Zone worsened during cooldown: {previous_zone} → {zone}")
-                actions.append(TradingAction(
-                    type=ActionType.CANCEL_ORDER,
-                    symbol=symbol,
-                    reason=f"Zone worsened: {previous_zone} → {zone}"
-                ))
-                actions.append(_create_limit_order_action(
-                    symbol, offset, offset_usd, cost_basis, zone,
-                    f"Re-order due to zone worsening during cooldown", config,
-                    in_cooldown=True
-                ))
-                return actions
-            else:
-                # Zone改善或不变，保持现状
-                logger.debug(f"{symbol}: Maintaining order during cooldown (zone: {zone})")
-                return [TradingAction(
-                    type=ActionType.NO_ACTION,
-                    symbol=symbol,
-                    reason=f"Maintaining order in cooldown (zone: {zone})",
-                    metadata={"in_cooldown": True, "zone": zone}
-                )]
+        # 非冷却期：无订单就下单
+        if not has_active_order:
+            logger.info(f"{symbol}: 📍 Entering zone {zone}, placing order")
+            action = _create_limit_order_action(
+                symbol, offset, offset_usd, cost_basis, zone,
+                f"Entering zone {zone}", config
+            )
+            logger.info(f"{symbol}: Placing {action.side} order for {action.size:.4f} @ ${action.price:.2f}")
+            return [action]
 
-        # 非冷却期逻辑
-        else:
-            if not has_active_order:
-                # 需要挂新单
-                logger.info(f"{symbol}: 📍 Entering zone {zone}, placing order")
-                action = _create_limit_order_action(
-                    symbol, offset, offset_usd, cost_basis, zone,
-                    f"Entering zone {zone}", config
-                )
-                logger.info(f"{symbol}: Placing {action.side} order for {action.size:.4f} @ ${action.price:.2f}")
-                return [action]
-            else:
-                # 非冷却期+有订单：正常状态，订单继续挂着
-                logger.debug(f"{symbol}: Order active in zone {zone}, maintaining")
-                return [TradingAction(
-                    type=ActionType.NO_ACTION,
-                    symbol=symbol,
-                    reason=f"Maintaining order in zone {zone}",
-                    metadata={"zone": zone, "has_order": True}
-                )]
+        # 默认：保持订单
+        logger.debug(f"{symbol}: Order active in zone {zone}, maintaining")
+        return [TradingAction(
+            type=ActionType.NO_ACTION,
+            symbol=symbol,
+            reason=f"Maintaining order in zone {zone}",
+            metadata={"zone": zone, "has_order": True}
+        )]
 
-    # ========== 决策4: 无敞口 - 清理状态 ==========
+    # ========== 决策5: 无敞口 - 清理状态 ==========
     if zone is None:
         if has_active_order:
             # 回到安全区，取消订单
