@@ -200,58 +200,7 @@ class Notifier:
         else:
             return NotifyType.SUCCESS  # 正常（绿色）
 
-    # ==================== 便捷方法 ====================
-
-    async def alert_success(self, symbol: str, message: str):
-        """发送成功通知"""
-        await self.send(
-            message=message,
-            title=f"✅ {symbol} Success",
-            priority=0
-        )
-
-    async def alert_warning(self, symbol: str, message: str):
-        """发送警告通知"""
-        await self.send(
-            message=message,
-            title=f"⚠️ {symbol} Warning",
-            priority=1
-        )
-
-    async def alert_error(self, symbol: str, message: str):
-        """发送错误通知"""
-        await self.send(
-            message=message,
-            title=f"🚨 {symbol} Error",
-            priority=2
-        )
-
-    async def alert_order_placed(self, symbol: str, side: str, quantity: float, price: float):
-        """订单下单通知"""
-        message = f"Order placed: {side.upper()} {quantity} {symbol} @ ${price:.2f}"
-        await self.send(
-            message=message,
-            title=f"📝 {symbol} Order",
-            priority=0
-        )
-
-    async def alert_order_filled(self, symbol: str, side: str, quantity: float, price: float):
-        """订单成交通知"""
-        message = f"Order filled: {side.upper()} {quantity} {symbol} @ ${price:.2f}"
-        await self.send(
-            message=message,
-            title=f"✅ {symbol} Filled",
-            priority=0
-        )
-
-    async def alert_order_cancelled(self, symbol: str, reason: str):
-        """订单取消通知"""
-        message = f"Order cancelled: {reason}"
-        await self.send(
-            message=message,
-            title=f"❌ {symbol} Cancelled",
-            priority=1
-        )
+    # ==================== 通知方法 ====================
 
     async def alert_threshold_exceeded(self, symbol: str, offset_usd: float, offset: float, current_price: float):
         """阈值超限通知"""
