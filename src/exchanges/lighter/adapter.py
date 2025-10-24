@@ -320,6 +320,10 @@ class LighterExchange(ExchangeInterface):
                     if not filled_at:
                         continue
 
+                    # 客户端过滤：跳过 cutoff_time 之前的成交
+                    if filled_at < cutoff_time:
+                        continue
+
                     # 从 trade.market_id 反查用户 symbol
                     trade_user_symbol = None
 
