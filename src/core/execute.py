@@ -11,7 +11,7 @@
 """
 import logging
 from typing import List, Dict, Any
-from .decide import TradingAction, ActionType
+from .types import TradingAction, ActionType
 
 logger = logging.getLogger(__name__)
 

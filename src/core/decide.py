@@ -11,38 +11,12 @@
 """
 import logging
 from typing import List, Dict, Any, Optional
-from dataclasses import dataclass
-from enum import Enum
 from datetime import datetime
 from utils.config import HedgeConfig
 from utils.calculators import calculate_close_size, calculate_limit_price
+from .types import ActionType, TradingAction
 
 logger = logging.getLogger(__name__)
-
-
-class ActionType(Enum):
-    """操作类型"""
-    PLACE_LIMIT_ORDER = "place_limit_order"
-    PLACE_MARKET_ORDER = "place_market_order"
-    CANCEL_ORDER = "cancel_order"
-    NO_ACTION = "no_action"
-    ALERT = "alert"
-
-
-@dataclass
-class TradingAction:
-    """交易操作"""
-    type: ActionType
-    symbol: str
-    side: Optional[str] = None  # buy/sell
-    size: Optional[float] = None
-    price: Optional[float] = None
-    reason: str = ""
-    metadata: Dict[str, Any] = None
-
-    def __post_init__(self):
-        if self.metadata is None:
-            self.metadata = {}
 
 
 async def decide_actions(
