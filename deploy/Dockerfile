@@ -5,13 +5,14 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # 安装系统依赖（git用于安装Lighter SDK，gcc用于编译，procps用于健康检查）
-# 添加重试逻辑以应对网络不稳定
-RUN apt-get update --fix-missing || apt-get update && \
+# 添加重试逻辑以应对网络不稳定，使用缓存挂载加速
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update --fix-missing || apt-get update && \
     apt-get install -y --no-install-recommends \
     git \
     gcc \
-    procps \
-    && rm -rf /var/lib/apt/lists/*
+    procps
 
 # 复制依赖文件
 COPY requirements.txt .
