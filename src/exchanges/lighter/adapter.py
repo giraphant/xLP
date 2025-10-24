@@ -3,16 +3,21 @@
 Lighter Exchange Adapter - 实现 ExchangeInterface
 """
 
+import logging
+import traceback
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from typing import Dict
+
 from ..interface import ExchangeInterface
 from .orders import LighterOrderManager
+
+logger = logging.getLogger(__name__)
 
 
 class LighterExchange(ExchangeInterface):
     """
     Lighter 交易所适配器
-    将 LighterClient 适配到统一的 ExchangeInterface
+    将 Lighter API 适配到统一的 ExchangeInterface
     """
 
     # Symbol to Lighter market symbol mapping
@@ -22,14 +27,6 @@ class LighterExchange(ExchangeInterface):
         "ETH": "ETH",
         "BTC": "BTC",
         "BONK": "1000BONK",  # Lighter uses 1000BONK, not BONK
-    }
-
-    # Reverse mapping: Lighter symbol → User symbol
-    REVERSE_MAP = {
-        "SOL": "SOL",
-        "BTC": "BTC",
-        "ETH": "ETH",
-        "1000BONK": "BONK"
     }
 
     def __init__(self, config: dict):
@@ -83,10 +80,6 @@ class LighterExchange(ExchangeInterface):
     def _to_lighter_symbol(self, user_symbol: str) -> str:
         """用户 symbol → Lighter symbol"""
         return self.SYMBOL_MAP.get(user_symbol.upper(), user_symbol.upper())
-
-    def _to_user_symbol(self, lighter_symbol: str) -> str:
-        """Lighter symbol → 用户 symbol"""
-        return self.REVERSE_MAP.get(lighter_symbol.upper(), lighter_symbol.upper())
 
     async def get_position(self, symbol: str) -> float:
         """获取当前持仓数量"""
@@ -144,9 +137,6 @@ class LighterExchange(ExchangeInterface):
 
     async def cancel_all_orders(self, symbol: str) -> int:
         """取消该币种的所有活跃订单（从交易所查询）"""
-        import logging
-        logger = logging.getLogger(__name__)
-
         # 查询该币种的所有活跃订单（真实查询）
         open_orders = await self.get_open_orders(symbol)
 
@@ -188,9 +178,6 @@ class LighterExchange(ExchangeInterface):
         Returns:
             订单列表，symbol 字段使用用户 symbol
         """
-        import logging
-        logger = logging.getLogger(__name__)
-
         try:
             # 确保 client 已初始化
             if self.lighter_client.client is None:
@@ -229,7 +216,6 @@ class LighterExchange(ExchangeInterface):
 
         except Exception as e:
             logger.error(f"Error fetching open orders for {symbol}: {e}")
-            import traceback
             logger.error(traceback.format_exc())
             return []
 
@@ -279,9 +265,6 @@ class LighterExchange(ExchangeInterface):
         Returns:
             成交列表，symbol 字段使用用户 symbol
         """
-        import logging
-        logger = logging.getLogger(__name__)
-
         try:
             # 确保 client 已初始化
             if self.lighter_client.client is None:
@@ -356,6 +339,5 @@ class LighterExchange(ExchangeInterface):
 
         except Exception as e:
             logger.error(f"Error fetching recent fills for {symbol}: {e}")
-            import traceback
             logger.error(traceback.format_exc())
             return []
