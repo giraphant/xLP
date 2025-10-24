@@ -263,13 +263,13 @@ class Notifier:
         )
 
     async def alert_force_close(self, symbol: str, size: float, side: str):
-        """强制平仓通知（低优先级，不触发高响度警报）"""
+        """强制平仓通知（普通优先级）"""
         side_cn = "卖出" if side.lower() == "sell" else "买入"
         message = f"强制平仓: {side_cn} {size:.4f} {symbol} (超时未成交)"
         await self.send(
             message=message,
             title=f"⏱️ {symbol} 强制平仓",
-            priority=-1  # 低优先级（info 级别）
+            priority=0  # 普通优先级（normal）
         )
 
     async def alert_system_error(self, message: str):
