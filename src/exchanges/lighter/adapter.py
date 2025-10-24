@@ -167,6 +167,15 @@ class LighterExchange(ExchangeInterface):
 
     def _parse_order(self, order, symbol: str) -> dict:
         """解析订单对象为标准格式"""
+        # Order对象使用 timestamp 字段，不是 created_at
+        created_at = None
+        if hasattr(order, 'timestamp') and order.timestamp:
+            created_at = datetime.fromtimestamp(order.timestamp / 1000)
+        elif hasattr(order, 'created_at') and order.created_at:
+            created_at = datetime.fromtimestamp(order.created_at / 1000)
+        else:
+            created_at = datetime.now()
+
         return {
             "order_id": str(order.order_index) if hasattr(order, 'order_index') else None,
             "symbol": symbol,
@@ -175,7 +184,7 @@ class LighterExchange(ExchangeInterface):
             "price": float(order.price) if hasattr(order, 'price') else 0,
             "filled_size": 0.0,  # 活跃订单还未成交
             "status": "open",
-            "created_at": datetime.fromtimestamp(order.created_at / 1000) if hasattr(order, 'created_at') else datetime.now(),
+            "created_at": created_at,
             "updated_at": datetime.now()
         }
 
@@ -221,25 +230,32 @@ class LighterExchange(ExchangeInterface):
             if trades_response and hasattr(trades_response, 'data'):
                 for trade in trades_response.data:
                     logger.debug(f"[get_recent_fills] Trade object: {trade}")
-                    logger.debug(f"[get_recent_fills] Trade attributes: {dir(trade)}")
 
-                    # 解析时间
-                    filled_at = datetime.fromtimestamp(trade.block_number / 1000) if hasattr(trade, 'block_number') else None
+                    # 解析时间 - Trade对象使用 timestamp 字段（毫秒时间戳）
+                    filled_at = None
+                    if hasattr(trade, 'timestamp') and trade.timestamp:
+                        filled_at = datetime.fromtimestamp(trade.timestamp / 1000)
                     logger.debug(f"[get_recent_fills] Parsed filled_at: {filled_at}")
 
                     # 获取symbol
                     trade_symbol = None
-                    for sym, lighter_sym in self.symbol_map.items():
-                        if lighter_sym.market_id == trade.market_id:
-                            trade_symbol = sym
-                            break
+                    if hasattr(trade, 'market_id'):
+                        for sym, lighter_sym in self.symbol_map.items():
+                            if lighter_sym.market_id == trade.market_id:
+                                trade_symbol = sym
+                                break
 
-                    if trade_symbol:
+                    if trade_symbol and filled_at:
+                        # Trade对象字段：size, price, is_maker_ask
+                        # 判断方向：需要知道这笔成交是我们作为maker还是taker
+                        # 简化：如果是ask方（卖），就是sell；如果是bid方（买），就是buy
+                        side = "sell" if hasattr(trade, 'is_maker_ask') and trade.is_maker_ask else "buy"
+
                         fill_record = {
-                            "order_id": str(trade.order_index) if hasattr(trade, 'order_index') else None,
+                            "order_id": str(trade.trade_id) if hasattr(trade, 'trade_id') else None,
                             "symbol": trade_symbol,
-                            "side": "sell" if trade.ask_filter == 1 else "buy",
-                            "filled_size": float(trade.base_amount) / 1000 if hasattr(trade, 'base_amount') else 0,
+                            "side": side,
+                            "filled_size": float(trade.size) / 1000 if hasattr(trade, 'size') else 0,
                             "filled_price": float(trade.price) if hasattr(trade, 'price') else 0,
                             "filled_at": filled_at
                         }
