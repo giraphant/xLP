@@ -15,6 +15,7 @@ from typing import Dict, Any, Tuple, List, Optional
 from datetime import datetime, timedelta
 from utils.calculators import calculate_offset_and_cost, calculate_zone
 from utils.config import HedgeConfig
+from .types import PreparedData, ZoneInfo, OrderInfo
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,7 @@ async def prepare_data(
     pool_calculators: Dict[str, callable],
     exchange,
     cost_history: Dict[str, Tuple[float, float]]
-) -> Dict[str, Any]:
+) -> PreparedData:
     """
     准备所有需要的数据（三阶段流程）
 
@@ -93,16 +94,14 @@ async def prepare_data(
     logger.info("=" * 50)
     logger.info(f"✅ Prepared data for {len(symbols)} symbols: {', '.join(symbols)}")
 
-    return {
-        "symbols": symbols,
-        "ideal_hedges": ideal_hedges,
-        "positions": positions,
-        "prices": prices,
-        "offsets": offsets,
-        "zones": zones,
-        "order_status": order_status,
-        "last_fill_times": last_fill_times
-    }
+    return PreparedData(
+        symbols=symbols,
+        prices=prices,
+        offsets=offsets,
+        zones=zones,
+        order_status=order_status,
+        last_fill_times=last_fill_times
+    )
 
 
 async def _fetch_pool_data(
@@ -306,18 +305,12 @@ def _calculate_zones(
     offsets: Dict[str, Tuple[float, float]],
     prices: Dict[str, float],
     config
-) -> Dict[str, Dict[str, Optional[int]]]:
+) -> Dict[str, ZoneInfo]:
     """
     计算所有 zone 信息（prepare 负责数据准备）
 
     Returns:
-        {
-            "SOL": {
-                "zone": 2,  # 当前应该在的 zone
-                "offset_usd": 12.5  # USD 偏移值
-            },
-            ...
-        }
+        {symbol: ZoneInfo(zone=x, offset_usd=y)}
     """
     logger.info("=" * 50)
     logger.info("🎯 CALCULATING ZONES")
@@ -340,10 +333,7 @@ def _calculate_zones(
             config.threshold_step_usd
         )
 
-        zones[symbol] = {
-            "zone": zone,
-            "offset_usd": offset_usd
-        }
+        zones[symbol] = ZoneInfo(zone=zone, offset_usd=offset_usd)
 
         # 日志
         if zone is None:
@@ -362,7 +352,7 @@ async def _fetch_order_status(
     prices: Dict[str, float],
     recent_fills: Dict[str, List[Dict]],
     config
-) -> Dict[str, Dict]:
+) -> Dict[str, OrderInfo]:
     """
     获取所有币种的订单状态并计算 previous_zone
 
@@ -372,16 +362,7 @@ async def _fetch_order_status(
     3. 都没有 → 0
 
     Returns:
-        {
-            "SOL": {
-                "has_order": bool,
-                "order_count": int,
-                "oldest_order_time": datetime or None,
-                "orders": [...],
-                "previous_zone": int  # 注意：不再是 Optional，最小值是 0
-            },
-            ...
-        }
+        {symbol: OrderInfo(...)}
     """
     logger.info("=" * 50)
     logger.info("📋 FETCHING ORDER STATUS")
@@ -418,23 +399,23 @@ async def _fetch_order_status(
         if symbol_orders:
             # 有订单
             oldest_order = min(symbol_orders, key=lambda x: x.get('created_at', datetime.now()))
-            order_status[symbol] = {
-                "has_order": True,
-                "order_count": len(symbol_orders),
-                "oldest_order_time": oldest_order.get('created_at'),
-                "orders": symbol_orders,
-                "previous_zone": previous_zone
-            }
+            order_status[symbol] = OrderInfo(
+                has_order=True,
+                order_count=len(symbol_orders),
+                oldest_order_time=oldest_order.get('created_at'),
+                orders=symbol_orders,
+                previous_zone=previous_zone
+            )
             logger.info(f"  • {symbol}: {len(symbol_orders)} open orders, previous_zone={previous_zone}")
         else:
             # 无订单
-            order_status[symbol] = {
-                "has_order": False,
-                "order_count": 0,
-                "oldest_order_time": None,
-                "orders": [],
-                "previous_zone": previous_zone
-            }
+            order_status[symbol] = OrderInfo(
+                has_order=False,
+                order_count=0,
+                oldest_order_time=None,
+                orders=[],
+                previous_zone=previous_zone
+            )
             if previous_zone > 0:
                 logger.info(f"  • {symbol}: No open orders, previous_zone={previous_zone}")
             else:

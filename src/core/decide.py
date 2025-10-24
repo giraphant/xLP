@@ -14,13 +14,13 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime
 from utils.config import HedgeConfig
 from utils.calculators import calculate_close_size, calculate_limit_price
-from .types import ActionType, TradingAction
+from .types import ActionType, TradingAction, PreparedData, OrderInfo
 
 logger = logging.getLogger(__name__)
 
 
 async def decide_actions(
-    data: Dict[str, Any],
+    data: PreparedData,
     config: HedgeConfig
 ) -> List[TradingAction]:
     """
@@ -30,15 +30,7 @@ async def decide_actions(
     原则：只从 data 获取数据，不做任何计算
 
     Args:
-        data: prepare_data() 准备好的所有数据
-            {
-                "symbols": [...],
-                "prices": {...},
-                "offsets": {symbol: (offset, cost_basis)},
-                "zones": {symbol: {"zone": x, "offset_usd": y}},  # prepare 计算好
-                "order_status": {symbol: {"previous_zone": x, ...}},  # prepare 计算好
-                "last_fill_times": {symbol: datetime or None}  # 最后成交时间
-            }
+        data: prepare_data() 准备好的 PreparedData 对象
         config: 配置对象
 
     Returns:
@@ -50,22 +42,22 @@ async def decide_actions(
 
     all_actions = []
 
-    for symbol in data["symbols"]:
+    for symbol in data.symbols:
         # 从 prepare 获取所有准备好的数据（纯决策，无计算）
-        if symbol not in data["offsets"] or symbol not in data["zones"]:
+        if symbol not in data.offsets or symbol not in data.zones:
             continue
 
         # 数据获取（不做计算）
-        offset, cost_basis = data["offsets"][symbol]
-        price = data["prices"][symbol]
-        zone_info = data["zones"][symbol]
-        zone = zone_info["zone"]
-        offset_usd = zone_info["offset_usd"]
+        offset, cost_basis = data.offsets[symbol]
+        price = data.prices[symbol]
+        zone_info = data.zones[symbol]
+        zone = zone_info.zone
+        offset_usd = zone_info.offset_usd
 
         # 获取订单和成交状态
-        order_info = data.get("order_status", {}).get(symbol, {})
-        last_fill_time = data.get("last_fill_times", {}).get(symbol)
-        previous_zone = order_info.get("previous_zone")
+        order_info = data.order_status.get(symbol)
+        last_fill_time = data.last_fill_times.get(symbol)
+        previous_zone = order_info.previous_zone if order_info else 0
 
         # 调用核心决策函数（纯决策逻辑）
         actions = _decide_symbol_actions_v2(
@@ -133,7 +125,7 @@ def _decide_symbol_actions_v2(
     offset_usd: float,
     zone: Optional[int],
     previous_zone: int,  # 不再是 Optional，最小值是 0
-    order_info: Dict[str, Any],
+    order_info: Optional[OrderInfo],
     last_fill_time: Optional[datetime],
     config: Dict[str, Any]
 ) -> List[TradingAction]:
@@ -155,8 +147,8 @@ def _decide_symbol_actions_v2(
     actions = []
 
     # 从实时状态获取信息
-    has_active_order = order_info.get("has_order", False)
-    oldest_order_time = order_info.get("oldest_order_time")
+    has_active_order = order_info.has_order if order_info else False
+    oldest_order_time = order_info.oldest_order_time if order_info else None
 
     # 记录状态转换
     # 注意：zone=None 表示安全区，previous_zone=0 也可能表示安全区（无历史记录）
