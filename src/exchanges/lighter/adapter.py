@@ -38,6 +38,9 @@ class LighterExchange(ExchangeInterface):
         self.symbol_to_market_id = {}  # {"SOL": 123, "BTC": 456, ...}
         self.market_id_to_symbol = {}  # {123: "SOL", 456: "BTC", ...}
 
+        # Lighter symbol → 用户 symbol 的反向映射
+        self.lighter_to_user_symbol = {v: k for k, v in self.SYMBOL_MAP.items()}  # {"1000BONK": "BONK", ...}
+
         # 完全无状态 - 所有数据从交易所查询
 
     def _get_market_id(self, symbol: str) -> str:
@@ -166,9 +169,11 @@ class LighterExchange(ExchangeInterface):
 
             # 如果指定了symbol，只查询该市场
             if symbol:
-                market_id = self.symbol_to_market_id.get(symbol)
+                # 转换成 Lighter symbol（"BONK" → "1000BONK"）
+                lighter_symbol = self._get_market_id(symbol)
+                market_id = self.symbol_to_market_id.get(lighter_symbol)
                 if not market_id:
-                    logger.warning(f"Symbol {symbol} not found in market map")
+                    logger.warning(f"Symbol {symbol} (lighter: {lighter_symbol}) not found in market map")
                     return []
 
                 # 查询该市场的活跃订单
@@ -178,20 +183,23 @@ class LighterExchange(ExchangeInterface):
                 )
 
                 if orders_response and hasattr(orders_response, 'orders'):
+                    # 返回订单时使用用户 symbol（保持输入参数一致）
                     for order in orders_response.orders:
                         open_orders.append(self._parse_order(order, symbol))
 
             else:
                 # 查询所有市场的活跃订单
-                for symbol, market_id in self.symbol_to_market_id.items():
+                for lighter_symbol, market_id in self.symbol_to_market_id.items():
                     orders_response = self.lighter_client.order_api.account_active_orders(
                         account_index=self.lighter_client.account_index,
                         market_id=market_id
                     )
 
                     if orders_response and hasattr(orders_response, 'orders'):
+                        # 转换回用户 symbol（"1000BONK" → "BONK"）
+                        user_symbol = self.lighter_to_user_symbol.get(lighter_symbol, lighter_symbol)
                         for order in orders_response.orders:
-                            open_orders.append(self._parse_order(order, symbol))
+                            open_orders.append(self._parse_order(order, user_symbol))
 
             return open_orders
 
@@ -289,11 +297,13 @@ class LighterExchange(ExchangeInterface):
                     logger.debug(f"[get_recent_fills] Parsed filled_at: {filled_at}")
 
                     # 获取symbol（使用反向映射，O(1)）
-                    trade_symbol = None
+                    lighter_symbol = None
                     if hasattr(trade, 'market_id'):
-                        trade_symbol = self.market_id_to_symbol.get(trade.market_id)
+                        lighter_symbol = self.market_id_to_symbol.get(trade.market_id)
 
-                    if trade_symbol and filled_at:
+                    if lighter_symbol and filled_at:
+                        # 转换回用户 symbol（"1000BONK" → "BONK"）
+                        trade_symbol = self.lighter_to_user_symbol.get(lighter_symbol, lighter_symbol)
                         # Trade对象字段：size, price, is_maker_ask
                         # 判断方向：需要知道这笔成交是我们作为maker还是taker
                         # 简化：如果是ask方（卖），就是sell；如果是bid方（买），就是buy
