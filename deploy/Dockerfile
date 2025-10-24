@@ -3,12 +3,13 @@ FROM python:3.11-slim
 # 设置工作目录
 WORKDIR /app
 
-# 安装系统依赖（git用于安装Lighter SDK，gcc用于编译）
+# 安装系统依赖（git用于安装Lighter SDK，gcc用于编译，procps用于健康检查）
 # 添加重试逻辑以应对网络不稳定
 RUN apt-get update --fix-missing || apt-get update && \
     apt-get install -y --no-install-recommends \
     git \
     gcc \
+    procps \
     && rm -rf /var/lib/apt/lists/*
 
 # 复制依赖文件
