@@ -215,10 +215,10 @@ def _decide_symbol_actions_v2(
             return actions
 
     # ========== 决策3: Zone恶化强制下单（最高优先级，无视冷却期） ==========
-    # 只要 zone 恶化（zone > previous_zone），立即强制下单，无视冷却期
+    # 只有 zone 显著恶化（跨越 2 个 zone）才强制下单，避免边界振荡
     # previous_zone 最小值是 0（从订单/成交/默认计算得出）
-    if zone is not None and zone > previous_zone:
-        logger.warning(f"{symbol}: 🚨 Zone worsened: {previous_zone} → {zone} (${offset_usd:.2f}) - FORCING ORDER (ignoring cooldown)")
+    if zone is not None and zone > previous_zone + 1:
+        logger.warning(f"{symbol}: 🚨 Zone worsened significantly: {previous_zone} → {zone} (${offset_usd:.2f}) - FORCING ORDER (ignoring cooldown)")
 
         # 取消旧订单（如果有）
         if has_active_order:
