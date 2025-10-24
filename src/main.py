@@ -45,6 +45,18 @@ async def main():
         traceback.print_exc()
         return
 
+    # DRY RUN 模式醒目提示
+    logger.info("=" * 70)
+    if engine.config.dry_run:
+        logger.warning("⚠️  ⚠️  ⚠️  DRY RUN MODE ENABLED ⚠️  ⚠️  ⚠️")
+        logger.warning("⚠️  NO REAL TRADES WILL BE EXECUTED")
+        logger.warning("⚠️  Set DRY_RUN=false in .env to enable real trading")
+    else:
+        logger.warning("🔴 🔴 🔴 REAL TRADING MODE ACTIVE 🔴 🔴 🔴")
+        logger.warning("🔴 ACTUAL TRADES WILL BE EXECUTED")
+        logger.warning("🔴 Make sure you understand the risks")
+    logger.info("=" * 70)
+
     # 主循环参数
     interval = engine.config.check_interval_seconds
     error_count = 0

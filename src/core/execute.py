@@ -16,6 +16,18 @@ from .decide import TradingAction, ActionType
 logger = logging.getLogger(__name__)
 
 
+# ========== DRY RUN 辅助函数 ==========
+
+def _should_execute_real_trade(config) -> bool:
+    """检查是否应该真实执行交易（非 dry run 模式）"""
+    return not config.dry_run
+
+
+def _log_dry_run_action(action_desc: str):
+    """统一的 dry run 日志输出"""
+    logger.info(f"🔍 [DRY RUN] {action_desc}")
+
+
 async def execute_actions(
     actions: List[TradingAction],
     exchange,
@@ -38,8 +50,8 @@ async def execute_actions(
     """
     logger.info("=" * 50)
     logger.info("⚡ EXECUTING ACTIONS")
-    if config.dry_run:
-        logger.info("🔍 DRY RUN MODE - No real trades will be executed")
+    if not _should_execute_real_trade(config):
+        logger.warning("⚠️  DRY RUN MODE - No real trades will be executed")
     logger.info("=" * 50)
 
     if not actions:
@@ -54,40 +66,38 @@ async def execute_actions(
 
             # 执行限价单
             if action.type == ActionType.PLACE_LIMIT_ORDER:
-                if config.dry_run:
-                    logger.info(f"[DRY RUN] Would place limit order: {action.symbol} {action.side} {action.size:.4f} @ ${action.price:.2f}")
-                    result["success"] = True
-                    result["order_id"] = "DRY_RUN_ORDER"
-                else:
-                    order_id = await _execute_limit_order(
-                        action, exchange
-                    )
-                    result["success"] = True
+                if _should_execute_real_trade(config):
+                    order_id = await _execute_limit_order(action, exchange)
                     result["order_id"] = order_id
+                else:
+                    _log_dry_run_action(
+                        f"Place limit order: {action.symbol} {action.side} "
+                        f"{action.size:.4f} @ ${action.price:.2f}"
+                    )
+                    result["order_id"] = "DRY_RUN"
+                result["success"] = True
 
             # 执行市价单
             elif action.type == ActionType.PLACE_MARKET_ORDER:
-                if config.dry_run:
-                    logger.info(f"[DRY RUN] Would place market order: {action.symbol} {action.side} {action.size:.4f}")
-                    result["success"] = True
-                    result["order_id"] = "DRY_RUN_MARKET"
-                else:
-                    order_id = await _execute_market_order(
-                        action, exchange, notifier
-                    )
-                    result["success"] = True
+                if _should_execute_real_trade(config):
+                    order_id = await _execute_market_order(action, exchange, notifier)
                     result["order_id"] = order_id
+                else:
+                    _log_dry_run_action(
+                        f"Place market order: {action.symbol} {action.side} "
+                        f"{action.size:.4f}"
+                    )
+                    result["order_id"] = "DRY_RUN"
+                result["success"] = True
 
             # 撤销订单
             elif action.type == ActionType.CANCEL_ORDER:
-                if config.dry_run:
-                    logger.info(f"[DRY RUN] Would cancel all orders: {action.symbol}")
-                    result["success"] = True
-                else:
-                    success = await _execute_cancel_order(
-                        action, exchange
-                    )
+                if _should_execute_real_trade(config):
+                    success = await _execute_cancel_order(action, exchange)
                     result["success"] = success
+                else:
+                    _log_dry_run_action(f"Cancel all orders: {action.symbol}")
+                    result["success"] = True
 
             # 发送警报
             elif action.type == ActionType.ALERT:
@@ -109,8 +119,8 @@ async def execute_actions(
     # 统计执行结果
     success_count = sum(1 for r in results if r["success"])
     logger.info(f"✅ Executed {success_count}/{len(results)} actions successfully")
-    if config.dry_run:
-        logger.info("🔍 DRY RUN MODE - No trades were actually executed")
+    if not _should_execute_real_trade(config):
+        logger.warning("⚠️  DRY RUN MODE - No trades were executed")
 
     return results
 
