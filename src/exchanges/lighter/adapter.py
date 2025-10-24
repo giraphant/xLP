@@ -221,6 +221,11 @@ class LighterExchange(ExchangeInterface):
 
     def _parse_order(self, order, symbol: str) -> dict:
         """解析订单对象为标准格式"""
+        # DEBUG: 打印订单对象的所有字段
+        logger.debug(f"[_parse_order] Order object for {symbol}: {dir(order)}")
+        logger.debug(f"[_parse_order] has base_size: {hasattr(order, 'base_size')}, value: {getattr(order, 'base_size', None)}")
+        logger.debug(f"[_parse_order] has remaining_base_amount: {hasattr(order, 'remaining_base_amount')}, value: {getattr(order, 'remaining_base_amount', None)}")
+
         # Order.timestamp 是秒级时间戳（不是毫秒！）
         created_at = None
         if hasattr(order, 'timestamp') and order.timestamp:
@@ -237,9 +242,11 @@ class LighterExchange(ExchangeInterface):
         size = 0.0
         if hasattr(order, 'base_size') and order.base_size:
             size = float(order.base_size)
+            logger.debug(f"[_parse_order] Using base_size: {size}")
         elif hasattr(order, 'remaining_base_amount') and order.remaining_base_amount:
             # Fallback: 手动转换（除以1000，因为是1000x市场）
             size = float(order.remaining_base_amount) / 1000
+            logger.debug(f"[_parse_order] Using remaining_base_amount/1000: {size}")
 
         side = "sell" if hasattr(order, 'is_ask') and order.is_ask else "buy"
 
