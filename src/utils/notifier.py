@@ -67,8 +67,9 @@ class Notifier:
             api_token = pushover_config.get("api_token", "")
 
             if user_key and api_token:
-                # Apprise Pushover URL 格式: pover://user@token?priority=high
-                url = f'pover://{user_key}@{api_token}?priority=high'
+                # Apprise Pushover URL 格式: pover://user@token
+                # 不在 URL 中设置 priority，让每个通知自己控制优先级
+                url = f'pover://{user_key}@{api_token}'
                 result = self.apobj.add(url)
 
                 if result:
@@ -262,13 +263,13 @@ class Notifier:
         )
 
     async def alert_force_close(self, symbol: str, size: float, side: str):
-        """强制平仓通知"""
+        """强制平仓通知（低优先级，不触发高响度警报）"""
         side_cn = "卖出" if side.lower() == "sell" else "买入"
         message = f"强制平仓: {side_cn} {size:.4f} {symbol} (超时未成交)"
         await self.send(
             message=message,
             title=f"⏱️ {symbol} 强制平仓",
-            priority=0
+            priority=-1  # 低优先级（info 级别）
         )
 
     async def alert_system_error(self, message: str):
