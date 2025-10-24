@@ -235,12 +235,12 @@ class LighterExchange(ExchangeInterface):
 
     def _parse_order(self, order, symbol: str) -> dict:
         """解析订单对象为标准格式"""
-        # Order对象使用 timestamp 字段，不是 created_at
+        # Order.timestamp 是秒级时间戳（不是毫秒！）
         created_at = None
         if hasattr(order, 'timestamp') and order.timestamp:
-            created_at = datetime.fromtimestamp(order.timestamp / 1000)
+            created_at = datetime.fromtimestamp(order.timestamp)  # 秒级
         elif hasattr(order, 'created_at') and order.created_at:
-            created_at = datetime.fromtimestamp(order.created_at / 1000)
+            created_at = datetime.fromtimestamp(order.created_at)  # 秒级
         else:
             created_at = datetime.now()
 
@@ -312,8 +312,8 @@ class LighterExchange(ExchangeInterface):
 
             # 解析成交
             fills = []
-            if response and hasattr(response, 'data'):
-                for trade in response.data:
+            if response and hasattr(response, 'trades'):
+                for trade in response.trades:
                     # 解析时间
                     filled_at = None
                     if hasattr(trade, 'timestamp') and trade.timestamp:
