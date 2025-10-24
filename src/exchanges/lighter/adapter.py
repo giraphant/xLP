@@ -249,9 +249,11 @@ class LighterExchange(ExchangeInterface):
             size = float(order.remaining_base_amount)
             logger.debug(f"[_parse_order] Using remaining_base_amount: {size}")
         elif hasattr(order, 'base_size') and order.base_size:
-            # Fallback: base_size 是整数形式，需要获取 market_info 转换
-            logger.warning(f"[_parse_order] Using base_size fallback (may be incorrect): {order.base_size}")
-            size = float(order.base_size)
+            # Fallback: base_size 是整数形式，需要除以 base_multiplier
+            # 所有市场的 base_multiplier 都是 1000
+            logger.warning(f"[_parse_order] Using base_size fallback: {order.base_size}")
+            size = float(order.base_size) / 1000
+            logger.debug(f"[_parse_order] Converted base_size to size: {size}")
 
         side = "sell" if hasattr(order, 'is_ask') and order.is_ask else "buy"
 
