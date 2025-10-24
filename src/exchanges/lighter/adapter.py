@@ -177,7 +177,7 @@ class LighterExchange(ExchangeInterface):
                     return []
 
                 # 查询该市场的活跃订单
-                orders_response = self.lighter_client.order_api.account_active_orders(
+                orders_response = await self.lighter_client.order_api.account_active_orders(
                     account_index=self.lighter_client.account_index,
                     market_id=market_id
                 )
@@ -190,7 +190,7 @@ class LighterExchange(ExchangeInterface):
             else:
                 # 查询所有市场的活跃订单
                 for lighter_symbol, market_id in self.symbol_to_market_id.items():
-                    orders_response = self.lighter_client.order_api.account_active_orders(
+                    orders_response = await self.lighter_client.order_api.account_active_orders(
                         account_index=self.lighter_client.account_index,
                         market_id=market_id
                     )
@@ -270,7 +270,7 @@ class LighterExchange(ExchangeInterface):
                     logger.debug(f"[get_recent_fills] market_id for {symbol}: {market_id}")
 
             # 调用 OrderApi.trades() 查询成交历史
-            trades_response = self.lighter_client.order_api.trades(
+            trades_response = await self.lighter_client.order_api.trades(
                 sort_by="block_number",
                 sort_dir="desc",
                 limit=100,  # 最多查100条
