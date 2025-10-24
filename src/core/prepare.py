@@ -26,7 +26,11 @@ async def prepare_data(
     cost_history: Dict[str, Tuple[float, float]]
 ) -> Dict[str, Any]:
     """
-    准备所有需要的数据
+    准备所有需要的数据（三阶段流程）
+
+    阶段1: 数据获取 (I/O 并发)
+    阶段2: 核心计算 (纯函数)
+    阶段3: 数据组装
 
     Args:
         config: 配置字典
@@ -43,21 +47,33 @@ async def prepare_data(
             "offsets": {"SOL": (10.5, 148.5), ...}  # (offset, cost_basis)
         }
     """
-    # 1. 获取池子数据
+    # ========== 阶段1: 数据获取 (I/O 并发) ==========
+    logger.info("=" * 50)
+    logger.info("🔄 STAGE 1: DATA FETCHING")
+    logger.info("=" * 50)
+
+    # 1.1 获取池子数据
     pool_data = await _fetch_pool_data(config, pool_calculators)
 
-    # 2. 计算理想对冲
+    # 1.2 计算理想对冲（轻量计算，用于获取 symbols）
     ideal_hedges = _calculate_ideal_hedges(pool_data)
-
-    # 3. 获取市场数据
     symbols = list(ideal_hedges.keys())
+
+    # 1.3 获取市场数据
     positions, prices = await _fetch_market_data(exchange, symbols, config)
 
-    # 3.5 获取订单和成交状态（传入价格用于计算 previous_zone）
-    order_status = await _fetch_order_status(exchange, symbols, prices, config)
-    last_fill_times = await _fetch_last_fill_times(exchange, symbols, config.cooldown_after_fill_minutes)
+    # 1.4 并发获取订单和成交数据（依赖 prices）
+    order_status, last_fill_times = await asyncio.gather(
+        _fetch_order_status(exchange, symbols, prices, config),
+        _fetch_last_fill_times(exchange, symbols, config.cooldown_after_fill_minutes)
+    )
 
-    # 4. 计算偏移和成本（prepare 自己读写 cost_history）
+    # ========== 阶段2: 核心计算 (纯函数) ==========
+    logger.info("=" * 50)
+    logger.info("🧮 STAGE 2: CALCULATIONS")
+    logger.info("=" * 50)
+
+    # 2.1 计算偏移和成本
     offsets = await _calculate_offsets(
         ideal_hedges,
         positions,
@@ -65,8 +81,14 @@ async def prepare_data(
         cost_history
     )
 
-    # 5. 计算 zones（prepare 负责所有数据准备，包括 zone）
+    # 2.2 计算 zones
     zones = _calculate_zones(offsets, prices, config)
+
+    # ========== 阶段3: 数据组装 ==========
+    logger.info("=" * 50)
+    logger.info("📦 STAGE 3: DATA ASSEMBLY")
+    logger.info("=" * 50)
+    logger.info(f"✅ Prepared data for {len(symbols)} symbols: {', '.join(symbols)}")
 
     return {
         "symbols": symbols,
@@ -74,9 +96,9 @@ async def prepare_data(
         "positions": positions,
         "prices": prices,
         "offsets": offsets,
-        "zones": zones,  # 新增：包含 zone 和 previous_zone
+        "zones": zones,
         "order_status": order_status,
-        "last_fill_times": last_fill_times  # {symbol: datetime or None}
+        "last_fill_times": last_fill_times
     }
 
 
