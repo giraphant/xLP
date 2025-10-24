@@ -411,7 +411,8 @@ async def _fetch_order_status(
                 symbol_orders,
                 price,
                 config.threshold_min_usd,
-                config.threshold_step_usd
+                config.threshold_step_usd,
+                config.close_ratio
             )
             source = "active_order"
         elif symbol_fills:

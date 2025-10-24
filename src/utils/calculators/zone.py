@@ -42,18 +42,24 @@ def calculate_zone_from_orders(
     orders: List[Dict],
     current_price: float,
     threshold_min: float,
-    threshold_step: float
+    threshold_step: float,
+    close_ratio: float = 40.0
 ) -> Optional[int]:
     """
     从订单信息反推上次下单时的 zone（无状态）
 
-    算法：(订单价值 - threshold_min) / threshold_step
+    算法：
+    1. 订单 size = offset * (close_ratio / 100)
+    2. offset = order_size / (close_ratio / 100)
+    3. offset_usd = offset * price
+    4. zone = (offset_usd - threshold_min) / threshold_step
 
     Args:
         orders: 订单列表 [{"size": x, "price": y}, ...]
         current_price: 当前价格（用于fallback）
         threshold_min: 最小阈值
         threshold_step: 阈值步长
+        close_ratio: 平仓比例（默认40%）
 
     Returns:
         zone (int) 或 None（无订单）
@@ -66,10 +72,15 @@ def calculate_zone_from_orders(
     order_size = abs(order.get("size", 0))
     order_price = order.get("price", current_price)
 
-    # 计算订单价值（USD）
-    order_value_usd = order_size * order_price
+    # 从订单 size 反推 offset
+    # order_size = offset * (close_ratio / 100)
+    # => offset = order_size / (close_ratio / 100)
+    offset = order_size / (close_ratio / 100)
+
+    # 计算 offset USD
+    offset_usd = offset * order_price
 
     # 反推 zone
-    zone = int((order_value_usd - threshold_min) / threshold_step)
+    zone = int((offset_usd - threshold_min) / threshold_step)
 
     return max(zone, 1)  # zone 至少为 1
