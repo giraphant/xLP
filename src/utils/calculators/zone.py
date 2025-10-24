@@ -72,6 +72,11 @@ def calculate_zone_from_orders(
     order_size = abs(order.get("size", 0))
     order_price = order.get("price", current_price)
 
+    # DEBUG: 打印订单数据
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.debug(f"[calculate_zone_from_orders] order_size={order_size}, order_price={order_price}, close_ratio={close_ratio}")
+
     # 从订单 size 反推 offset
     # order_size = offset * (close_ratio / 100)
     # => offset = order_size / (close_ratio / 100)
@@ -80,7 +85,11 @@ def calculate_zone_from_orders(
     # 计算 offset USD
     offset_usd = offset * order_price
 
+    logger.debug(f"[calculate_zone_from_orders] offset={offset}, offset_usd={offset_usd}, threshold_min={threshold_min}, threshold_step={threshold_step}")
+
     # 反推 zone
     zone = int((offset_usd - threshold_min) / threshold_step)
+
+    logger.debug(f"[calculate_zone_from_orders] calculated zone={zone}, returning max(zone, 1)={max(zone, 1)}")
 
     return max(zone, 1)  # zone 至少为 1
