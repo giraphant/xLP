@@ -91,11 +91,16 @@ async def _report_to_matsu(data: PreparedData, matsu_reporter):
             for symbol, (offset, cost) in data.offsets.items()
         }
 
+        # 生成客户端时间戳（避免 Matsu 服务器端聚合）
+        from datetime import datetime, timezone
+        timestamp = datetime.now(timezone.utc).isoformat()
+
         # 调用正确的方法名
         success = await matsu_reporter.report(
             ideal_hedges=ideal_hedges,
             actual_hedges=actual_hedges,
-            cost_bases=cost_bases
+            cost_bases=cost_bases,
+            timestamp=timestamp
         )
 
         if success:
