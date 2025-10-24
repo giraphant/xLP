@@ -4,7 +4,7 @@ solana>=0.30.0          # Solana blockchain interaction
 solders>=0.18.0         # Solana SDK
 
 # Lighter Exchange Integration
-git+https://github.com/elliottech/lighter-python.git@d0009799970aad54ebb940aa3dc90cbc00028c54
+git+https://github.com/elliottech/lighter-python.git@dd2d3c2976299c6857e2eba59f5d8c6f76f70b48
 
 # Notifications
 # httpx already included above for Pushover

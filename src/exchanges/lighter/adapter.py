@@ -185,21 +185,59 @@ class LighterExchange(ExchangeInterface):
 
     async def get_open_orders(self, symbol: str = None) -> list:
         """
-        获取活跃订单
-
-        注：当前版本使用本地缓存的订单信息
-        未来可以通过AccountApi查询真实订单状态
+        获取活跃订单（从交易所真实查询）
         """
-        open_orders = []
+        try:
+            open_orders = []
 
-        # 使用本地维护的订单详情
-        # TODO: 未来可以使用self.lighter_client.account_api查询真实订单
-        for order_id, details in self.order_details.items():
-            if details["status"] == "open":
-                if symbol is None or details["symbol"] == symbol:
-                    open_orders.append(details.copy())
+            # 如果指定了symbol，只查询该市场
+            if symbol:
+                lighter_symbol = self.symbol_map.get(symbol)
+                if not lighter_symbol:
+                    logger.warning(f"Symbol {symbol} not found in symbol map")
+                    return []
 
-        return open_orders
+                # 查询该市场的活跃订单
+                orders_response = self.lighter_client.order_api.account_active_orders(
+                    account_index=self.lighter_client.account_index,
+                    market_id=lighter_symbol.market_id
+                )
+
+                if orders_response and hasattr(orders_response, 'orders'):
+                    for order in orders_response.orders:
+                        open_orders.append(self._parse_order(order, symbol))
+
+            else:
+                # 查询所有市场的活跃订单
+                for sym, lighter_sym in self.symbol_map.items():
+                    orders_response = self.lighter_client.order_api.account_active_orders(
+                        account_index=self.lighter_client.account_index,
+                        market_id=lighter_sym.market_id
+                    )
+
+                    if orders_response and hasattr(orders_response, 'orders'):
+                        for order in orders_response.orders:
+                            open_orders.append(self._parse_order(order, sym))
+
+            return open_orders
+
+        except Exception as e:
+            logger.error(f"Error fetching open orders: {e}")
+            return []
+
+    def _parse_order(self, order, symbol: str) -> dict:
+        """解析订单对象为标准格式"""
+        return {
+            "order_id": str(order.order_index) if hasattr(order, 'order_index') else None,
+            "symbol": symbol,
+            "side": "sell" if order.ask_filter == 1 else "buy" if hasattr(order, 'ask_filter') else "unknown",
+            "size": float(order.base_amount) / 1000 if hasattr(order, 'base_amount') else 0,
+            "price": float(order.price) if hasattr(order, 'price') else 0,
+            "filled_size": 0.0,  # 活跃订单还未成交
+            "status": "open",
+            "created_at": datetime.fromtimestamp(order.created_at / 1000) if hasattr(order, 'created_at') else datetime.now(),
+            "updated_at": datetime.now()
+        }
 
     async def get_recent_fills(self, symbol: str = None, minutes_back: int = 10) -> list:
         """
