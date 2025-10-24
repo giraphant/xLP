@@ -34,10 +34,7 @@ class LighterExchange(ExchangeInterface):
             base_url=config.get("base_url", "https://mainnet.zklighter.elliot.ai")
         )
 
-        # Track order IDs per symbol for cancellation
-        self.order_map = {}  # {order_id: (symbol, market_id)}
-        # Track detailed order info for query
-        self.order_details = {}  # {order_id: order_info}
+        # 完全无状态 - 所有数据从交易所查询
 
     def _get_market_id(self, symbol: str) -> str:
         """Convert symbol to Lighter market symbol"""
@@ -72,23 +69,6 @@ class LighterExchange(ExchangeInterface):
             reduce_only=False
         )
 
-        # Store mapping for cancellation
-        self.order_map[order_id] = (symbol, lighter_symbol)
-
-        # Store order details for query
-        now = datetime.now()
-        self.order_details[order_id] = {
-            "order_id": order_id,
-            "symbol": symbol,
-            "side": side,
-            "size": size,
-            "price": price,
-            "filled_size": 0.0,
-            "status": "open",
-            "created_at": now,
-            "updated_at": now
-        }
-
         return order_id
 
     async def place_market_order(
@@ -105,73 +85,33 @@ class LighterExchange(ExchangeInterface):
             size=size
         )
 
-        # Store mapping for cancellation
-        self.order_map[order_id] = (symbol, lighter_symbol)
-
-        # Store order details - market orders are immediately filled
-        now = datetime.now()
-        current_price = await self.lighter_client.get_price(lighter_symbol)
-        self.order_details[order_id] = {
-            "order_id": order_id,
-            "symbol": symbol,
-            "side": side,
-            "size": size,
-            "price": current_price,
-            "filled_size": size,
-            "status": "filled",
-            "created_at": now,
-            "updated_at": now,
-            "filled_at": now
-        }
-
         return order_id
 
-    async def cancel_order(self, order_id: str) -> bool:
-        """撤销订单"""
-        if order_id not in self.order_map:
-            # Try to extract market ID from order ID or use default
-            # This is a fallback - ideally we should always have the mapping
-            return False
-
-        symbol, lighter_symbol = self.order_map[order_id]
-        success = await self.lighter_client.cancel_order(lighter_symbol, order_id)
-
-        if success:
-            del self.order_map[order_id]
-            # Update order status
-            if order_id in self.order_details:
-                self.order_details[order_id]["status"] = "cancelled"
-                self.order_details[order_id]["updated_at"] = datetime.now()
-
-        return success
-
     async def cancel_all_orders(self, symbol: str) -> int:
-        """取消该币种的所有活跃订单"""
+        """取消该币种的所有活跃订单（从交易所查询）"""
         import logging
         logger = logging.getLogger(__name__)
 
+        # 查询该币种的所有活跃订单（真实查询）
+        open_orders = await self.get_open_orders(symbol)
+
+        logger.info(f"[Lighter] cancel_all_orders({symbol}): found {len(open_orders)} active orders")
+
+        if not open_orders:
+            return 0
+
         lighter_symbol = self._get_market_id(symbol)
-
-        # 找出该 symbol 的所有订单
-        orders_to_cancel = [
-            order_id for order_id, (sym, _) in self.order_map.items()
-            if sym == symbol
-        ]
-
-        logger.info(f"[Lighter] cancel_all_orders({symbol}): order_map has {len(self.order_map)} total orders")
-        logger.info(f"[Lighter] cancel_all_orders({symbol}): found {len(orders_to_cancel)} orders for {symbol}: {orders_to_cancel}")
-
         canceled_count = 0
-        for order_id in orders_to_cancel:
+
+        for order in open_orders:
+            order_id = order.get("order_id")
+            if not order_id:
+                continue
+
             try:
                 logger.info(f"[Lighter] Attempting to cancel order {order_id}")
                 success = await self.lighter_client.cancel_order(lighter_symbol, order_id)
                 if success:
-                    del self.order_map[order_id]
-                    # Update order status
-                    if order_id in self.order_details:
-                        self.order_details[order_id]["status"] = "cancelled"
-                        self.order_details[order_id]["updated_at"] = datetime.now()
                     canceled_count += 1
                     logger.info(f"[Lighter] Successfully canceled order {order_id}")
                 else:
@@ -180,7 +120,7 @@ class LighterExchange(ExchangeInterface):
                 # 继续取消其他订单
                 logger.error(f"[Lighter] Exception canceling order {order_id}: {e}")
 
-        logger.info(f"[Lighter] cancel_all_orders({symbol}): canceled {canceled_count}/{len(orders_to_cancel)} orders")
+        logger.info(f"[Lighter] cancel_all_orders({symbol}): canceled {canceled_count}/{len(open_orders)} orders")
         return canceled_count
 
     async def get_open_orders(self, symbol: str = None) -> list:
