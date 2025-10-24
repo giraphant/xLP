@@ -299,8 +299,9 @@ class LighterExchange(ExchangeInterface):
             auth_token, _ = self.lighter_client.client.create_auth_token_with_expiry()
 
             # 使用 client.order_api（需要传入认证 token）
+            # sort_by 选项: block_height, timestamp, trade_id
             response = await self.lighter_client.client.order_api.trades(
-                sort_by="block_number",
+                sort_by="timestamp",
                 sort_dir="desc",
                 limit=100,
                 account_index=self.lighter_client.account_index,
