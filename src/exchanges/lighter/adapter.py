@@ -183,10 +183,15 @@ class LighterExchange(ExchangeInterface):
         """
         获取最近成交记录（从交易所真实查询）
         """
+        import logging
+        logger = logging.getLogger(__name__)
+
         try:
             # 计算时间范围（毫秒时间戳）
             cutoff_time = datetime.now() - timedelta(minutes=minutes_back)
             cutoff_timestamp_ms = int(cutoff_time.timestamp() * 1000)
+
+            logger.debug(f"[get_recent_fills] Querying fills for {symbol or 'all symbols'}, cutoff: {cutoff_time}, timestamp_ms: {cutoff_timestamp_ms}")
 
             # 如果指定了symbol，获取market_id
             market_id = None
@@ -194,6 +199,7 @@ class LighterExchange(ExchangeInterface):
                 lighter_symbol = self.symbol_map.get(symbol)
                 if lighter_symbol:
                     market_id = lighter_symbol.market_id
+                    logger.debug(f"[get_recent_fills] market_id for {symbol}: {market_id}")
 
             # 调用 OrderApi.trades() 查询成交历史
             trades_response = self.lighter_client.order_api.trades(
@@ -205,12 +211,21 @@ class LighterExchange(ExchangeInterface):
                 var_from=cutoff_timestamp_ms
             )
 
+            logger.debug(f"[get_recent_fills] API response: {trades_response}")
+            logger.debug(f"[get_recent_fills] Has 'data' attr: {hasattr(trades_response, 'data')}")
+            if hasattr(trades_response, 'data'):
+                logger.debug(f"[get_recent_fills] Number of trades: {len(trades_response.data) if trades_response.data else 0}")
+
             # 解析成交记录
             recent_fills = []
             if trades_response and hasattr(trades_response, 'data'):
                 for trade in trades_response.data:
+                    logger.debug(f"[get_recent_fills] Trade object: {trade}")
+                    logger.debug(f"[get_recent_fills] Trade attributes: {dir(trade)}")
+
                     # 解析时间
                     filled_at = datetime.fromtimestamp(trade.block_number / 1000) if hasattr(trade, 'block_number') else None
+                    logger.debug(f"[get_recent_fills] Parsed filled_at: {filled_at}")
 
                     # 获取symbol
                     trade_symbol = None
@@ -220,17 +235,22 @@ class LighterExchange(ExchangeInterface):
                             break
 
                     if trade_symbol:
-                        recent_fills.append({
+                        fill_record = {
                             "order_id": str(trade.order_index) if hasattr(trade, 'order_index') else None,
                             "symbol": trade_symbol,
                             "side": "sell" if trade.ask_filter == 1 else "buy",
                             "filled_size": float(trade.base_amount) / 1000 if hasattr(trade, 'base_amount') else 0,
                             "filled_price": float(trade.price) if hasattr(trade, 'price') else 0,
                             "filled_at": filled_at
-                        })
+                        }
+                        logger.debug(f"[get_recent_fills] Parsed fill: {fill_record}")
+                        recent_fills.append(fill_record)
 
+            logger.info(f"[get_recent_fills] Found {len(recent_fills)} fills for {symbol or 'all symbols'}")
             return recent_fills
 
         except Exception as e:
             logger.error(f"Error fetching recent fills: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return []
