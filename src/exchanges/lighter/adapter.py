@@ -236,17 +236,22 @@ class LighterExchange(ExchangeInterface):
             created_at = datetime.now()
 
         # Order对象字段：
-        # - remaining_base_amount: 剩余未成交数量（链上整数）
-        # - base_size: 订单大小（实际数量，已转换）
+        # - remaining_base_amount: 剩余未成交数量（已转换为实际数量，可直接使用）
+        # - base_size: 链上整数形式（需要除以 base_multiplier，不要用）
         # - is_ask: True=卖单, False=买单
+        #
+        # 实测发现：
+        # - remaining_base_amount = 0.356 ✅ 正确
+        # - base_size = 356 ❌ 错误（整数形式）
         size = 0.0
-        if hasattr(order, 'base_size') and order.base_size:
+        if hasattr(order, 'remaining_base_amount') and order.remaining_base_amount:
+            # 优先使用 remaining_base_amount（已转换为实际数量）
+            size = float(order.remaining_base_amount)
+            logger.debug(f"[_parse_order] Using remaining_base_amount: {size}")
+        elif hasattr(order, 'base_size') and order.base_size:
+            # Fallback: base_size 是整数形式，需要获取 market_info 转换
+            logger.warning(f"[_parse_order] Using base_size fallback (may be incorrect): {order.base_size}")
             size = float(order.base_size)
-            logger.debug(f"[_parse_order] Using base_size: {size}")
-        elif hasattr(order, 'remaining_base_amount') and order.remaining_base_amount:
-            # Fallback: 手动转换（除以1000，因为是1000x市场）
-            size = float(order.remaining_base_amount) / 1000
-            logger.debug(f"[_parse_order] Using remaining_base_amount/1000: {size}")
 
         side = "sell" if hasattr(order, 'is_ask') and order.is_ask else "buy"
 
