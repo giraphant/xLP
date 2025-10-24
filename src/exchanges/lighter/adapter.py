@@ -192,11 +192,16 @@ class LighterExchange(ExchangeInterface):
         logger = logging.getLogger(__name__)
 
         try:
+            # 确保 client 已初始化
+            if self.lighter_client.client is None:
+                await self.lighter_client.initialize()
+
             if symbol:
                 # 单个市场
                 market_id = await self._get_market_id(symbol)
 
-                response = await self.lighter_client.order_api.account_active_orders(
+                # 使用 client.order_api（带认证）而不是 self.order_api（不带认证）
+                response = await self.lighter_client.client.order_api.account_active_orders(
                     account_index=self.lighter_client.account_index,
                     market_id=market_id
                 )
@@ -274,6 +279,10 @@ class LighterExchange(ExchangeInterface):
         logger = logging.getLogger(__name__)
 
         try:
+            # 确保 client 已初始化
+            if self.lighter_client.client is None:
+                await self.lighter_client.initialize()
+
             cutoff_time = datetime.now() - timedelta(minutes=minutes_back)
             cutoff_timestamp_ms = int(cutoff_time.timestamp() * 1000)
 
@@ -282,8 +291,8 @@ class LighterExchange(ExchangeInterface):
             if symbol:
                 market_id = await self._get_market_id(symbol)
 
-            # 调用 API
-            response = await self.lighter_client.order_api.trades(
+            # 使用 client.order_api（带认证）
+            response = await self.lighter_client.client.order_api.trades(
                 sort_by="block_number",
                 sort_dir="desc",
                 limit=100,
