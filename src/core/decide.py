@@ -264,9 +264,9 @@ def _decide_symbol_actions(
 
             return actions
 
-    # ========== 决策3: 区间变化处理 ==========
-    if zone != current_zone:
-        logger.info(f"{symbol}: Zone changed from {current_zone} to {zone}")
+    # ========== 决策3: 有敞口或从敞口恢复时的订单管理 ==========
+    if zone is not None or current_zone is not None:
+        logger.debug(f"{symbol}: Managing orders (zone={zone}, current_zone={current_zone})")
 
         # 检查冷却期
         in_cooldown, cooldown_status = _check_cooldown(state, current_zone, zone, config)
@@ -320,35 +320,45 @@ def _decide_symbol_actions(
                 ))
                 return actions
 
-        # 非冷却期：正常的区间变化处理
-        # 取消该币种的所有订单（不检查 is_monitoring，防止状态不一致）
-        actions.append(TradingAction(
-            type=ActionType.CANCEL_ORDER,
-            symbol=symbol,
-            reason=f"Zone changed from {current_zone} to {zone}"
-        ))
+        # 非冷却期：检查 zone 是否变化
+        if zone != current_zone:
+            # Zone 变化了
+            logger.info(f"{symbol}: Zone changed from {current_zone} to {zone}")
+            actions.append(TradingAction(
+                type=ActionType.CANCEL_ORDER,
+                symbol=symbol,
+                reason=f"Zone changed from {current_zone} to {zone}"
+            ))
 
-        # 根据新区间决定操作
-        if zone is None:
-            logger.info(f"{symbol}: Back within threshold, no action needed")
+            if zone is None:
+                # 回到阈值内，只取消订单
+                logger.info(f"{symbol}: Back within threshold, no action needed")
+                actions.append(TradingAction(
+                    type=ActionType.NO_ACTION,
+                    symbol=symbol,
+                    reason="Within threshold"
+                ))
+            else:
+                # 进入新区间，挂限价单
+                action = _create_limit_order_action(
+                    symbol=symbol,
+                    offset=offset,
+                    offset_usd=offset_usd,
+                    cost_basis=cost_basis,
+                    zone=zone,
+                    reason=f"Entered zone {zone}",
+                    config=config
+                )
+                logger.info(f"{symbol}: Placing {action.side} order for {action.size:.4f} @ ${action.price:.2f}")
+                actions.append(action)
+        else:
+            # Zone 没变化，保持现状
+            logger.debug(f"{symbol}: Zone unchanged at {zone}, maintaining current state")
             actions.append(TradingAction(
                 type=ActionType.NO_ACTION,
                 symbol=symbol,
-                reason="Within threshold"
+                reason=f"Maintaining order in zone {zone}"
             ))
-        else:
-            # 进入新区间，挂限价单
-            action = _create_limit_order_action(
-                symbol=symbol,
-                offset=offset,
-                offset_usd=offset_usd,
-                cost_basis=cost_basis,
-                zone=zone,
-                reason=f"Entered zone {zone}",
-                config=config
-            )
-            logger.info(f"{symbol}: Placing {action.side} order for {action.size:.4f} @ ${action.price:.2f}")
-            actions.append(action)
 
     # ========== 决策4: 无变化 ==========
     if not actions:
