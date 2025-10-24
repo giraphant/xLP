@@ -176,11 +176,24 @@ class LighterExchange(ExchangeInterface):
         else:
             created_at = datetime.now()
 
+        # Order对象字段：
+        # - remaining_base_amount: 剩余未成交数量（链上整数）
+        # - base_size: 订单大小（实际数量，已转换）
+        # - is_ask: True=卖单, False=买单
+        size = 0.0
+        if hasattr(order, 'base_size') and order.base_size:
+            size = float(order.base_size)
+        elif hasattr(order, 'remaining_base_amount') and order.remaining_base_amount:
+            # Fallback: 手动转换（除以1000，因为是1000x市场）
+            size = float(order.remaining_base_amount) / 1000
+
+        side = "sell" if hasattr(order, 'is_ask') and order.is_ask else "buy"
+
         return {
             "order_id": str(order.order_index) if hasattr(order, 'order_index') else None,
             "symbol": symbol,
-            "side": "sell" if order.ask_filter == 1 else "buy" if hasattr(order, 'ask_filter') else "unknown",
-            "size": float(order.base_amount) / 1000 if hasattr(order, 'base_amount') else 0,
+            "side": side,
+            "size": size,
             "price": float(order.price) if hasattr(order, 'price') else 0,
             "filled_size": 0.0,  # 活跃订单还未成交
             "status": "open",
