@@ -108,6 +108,13 @@ class LighterExchange(ExchangeInterface):
 
         return order_id
 
+    async def cancel_order(self, order_id: str) -> bool:
+        """
+        取消单个订单（不使用，保留以满足接口要求）
+        实际使用 cancel_all_orders()
+        """
+        raise NotImplementedError("Use cancel_all_orders() instead")
+
     async def cancel_all_orders(self, symbol: str) -> int:
         """取消该币种的所有活跃订单（从交易所查询）"""
         import logging
