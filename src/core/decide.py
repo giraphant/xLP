@@ -185,8 +185,12 @@ def _decide_symbol_actions_v2(
     oldest_order_time = order_info.get("oldest_order_time")
 
     # 记录状态转换
-    if zone != previous_zone:
-        logger.info(f"{symbol}: Zone transition: {previous_zone} → {zone} (${offset_usd:.2f})")
+    # 注意：zone=None 表示安全区，previous_zone=0 也可能表示安全区（无历史记录）
+    # 为了避免混淆，统一将 None 视为 0
+    normalized_zone = zone if zone is not None else 0
+
+    if normalized_zone != previous_zone:
+        logger.info(f"{symbol}: Zone transition: {previous_zone} → {normalized_zone} (${offset_usd:.2f})")
 
     # ========== 决策1: 超阈值检查 ==========
     if zone == -1:
