@@ -62,11 +62,14 @@ async def prepare_data(
     # 1.3 获取市场数据
     positions, prices = await _fetch_market_data(exchange, symbols, config)
 
-    # 1.4 并发获取订单和成交数据（依赖 prices）
-    order_status, last_fill_times = await asyncio.gather(
-        _fetch_order_status(exchange, symbols, prices, config),
-        _fetch_last_fill_times(exchange, symbols, config.cooldown_after_fill_minutes)
-    )
+    # 1.4 先获取成交历史（用于计算 previous_zone）
+    recent_fills = await _fetch_recent_fills(exchange, symbols, config.cooldown_after_fill_minutes)
+
+    # 1.5 获取订单状态（传入成交历史用于计算 previous_zone）
+    order_status = await _fetch_order_status(exchange, symbols, prices, recent_fills, config)
+
+    # 1.6 从成交历史提取最后成交时间
+    last_fill_times = _extract_last_fill_times(recent_fills, symbols)
 
     # ========== 阶段2: 核心计算 (纯函数) ==========
     logger.info("=" * 50)
@@ -357,10 +360,16 @@ async def _fetch_order_status(
     exchange,
     symbols: List[str],
     prices: Dict[str, float],
+    recent_fills: Dict[str, List[Dict]],
     config
 ) -> Dict[str, Dict]:
     """
     获取所有币种的订单状态并计算 previous_zone
+
+    previous_zone 计算逻辑（优先级）：
+    1. 有活跃订单 → 从订单计算 zone
+    2. 冷却期内有成交 → 从最近成交计算 zone
+    3. 都没有 → 0
 
     Returns:
         {
@@ -369,7 +378,7 @@ async def _fetch_order_status(
                 "order_count": int,
                 "oldest_order_time": datetime or None,
                 "orders": [...],
-                "previous_zone": int or None
+                "previous_zone": int  # 注意：不再是 Optional，最小值是 0
             },
             ...
         }
@@ -390,20 +399,43 @@ async def _fetch_order_status(
     # 按币种整理订单
     for symbol in symbols:
         symbol_orders = [o for o in all_orders if o.get('symbol') == symbol]
+        symbol_fills = recent_fills.get(symbol, [])
+        price = prices.get(symbol, 0)
+
+        # 计算 previous_zone（三优先级）
+        previous_zone = 0  # 默认值
 
         if symbol_orders:
-            # 找到最早的订单
-            oldest_order = min(symbol_orders, key=lambda x: x.get('created_at', datetime.now()))
-
-            # 从订单计算 previous_zone（在 prepare 阶段计算好）
-            price = prices.get(symbol, 0)
+            # 优先级1: 有活跃订单 → 从订单计算
             previous_zone = calculate_zone_from_orders(
                 symbol_orders,
                 price,
                 config.threshold_min_usd,
                 config.threshold_step_usd
             )
+            source = "active_order"
+        elif symbol_fills:
+            # 优先级2: 冷却期内有成交 → 从最近成交计算
+            latest_fill = max(symbol_fills, key=lambda x: x.get('filled_at', datetime.min))
+            fill_size = abs(latest_fill.get('filled_size', 0))
+            fill_price = latest_fill.get('filled_price', price)
+            fill_offset_usd = fill_size * fill_price
 
+            from utils.calculators import calculate_zone
+            previous_zone = calculate_zone(
+                fill_offset_usd,
+                config.threshold_min_usd,
+                config.threshold_max_usd,
+                config.threshold_step_usd
+            ) or 0  # None 转为 0
+            source = "recent_fill"
+        else:
+            # 优先级3: 都没有 → 0
+            source = "default"
+
+        if symbol_orders:
+            # 有订单
+            oldest_order = min(symbol_orders, key=lambda x: x.get('created_at', datetime.now()))
             order_status[symbol] = {
                 "has_order": True,
                 "order_count": len(symbol_orders),
@@ -412,18 +444,74 @@ async def _fetch_order_status(
                 "previous_zone": previous_zone
             }
             logger.info(f"  • {symbol}: {len(symbol_orders)} open orders, "
-                       f"zone {previous_zone}, oldest from {oldest_order.get('created_at', 'unknown')}")
+                       f"previous_zone={previous_zone} (from {source})")
         else:
+            # 无订单
             order_status[symbol] = {
                 "has_order": False,
                 "order_count": 0,
                 "oldest_order_time": None,
                 "orders": [],
-                "previous_zone": None
+                "previous_zone": previous_zone
             }
-            logger.debug(f"  • {symbol}: No open orders")
+            if previous_zone > 0:
+                logger.info(f"  • {symbol}: No open orders, previous_zone={previous_zone} (from {source})")
+            else:
+                logger.debug(f"  • {symbol}: No open orders, previous_zone=0")
 
     return order_status
+
+
+async def _fetch_recent_fills(exchange, symbols: List[str], cooldown_minutes: int) -> Dict[str, List[Dict]]:
+    """
+    获取最近成交记录（完整数据）
+
+    Returns:
+        {symbol: [fill1, fill2, ...]}
+    """
+    logger.info("=" * 50)
+    logger.info("📜 FETCHING RECENT FILLS")
+    logger.info("=" * 50)
+
+    recent_fills = {}
+
+    try:
+        all_fills = await exchange.get_recent_fills(minutes_back=cooldown_minutes + 5)
+    except Exception as e:
+        logger.error(f"Failed to fetch recent fills: {e}")
+        all_fills = []
+
+    # 按币种整理成交
+    for symbol in symbols:
+        symbol_fills = [f for f in all_fills if f.get('symbol') == symbol]
+        recent_fills[symbol] = symbol_fills
+
+        if symbol_fills:
+            logger.debug(f"  • {symbol}: {len(symbol_fills)} recent fills")
+        else:
+            logger.debug(f"  • {symbol}: No recent fills")
+
+    return recent_fills
+
+
+def _extract_last_fill_times(recent_fills: Dict[str, List[Dict]], symbols: List[str]) -> Dict[str, Optional[datetime]]:
+    """
+    从成交记录中提取最后成交时间
+
+    Returns:
+        {symbol: datetime or None}
+    """
+    last_fill_times = {}
+
+    for symbol in symbols:
+        symbol_fills = recent_fills.get(symbol, [])
+        if symbol_fills:
+            latest_fill = max(symbol_fills, key=lambda x: x.get('filled_at', datetime.min))
+            last_fill_times[symbol] = latest_fill.get('filled_at')
+        else:
+            last_fill_times[symbol] = None
+
+    return last_fill_times
 
 
 async def _fetch_last_fill_times(exchange, symbols: List[str], cooldown_minutes: int) -> Dict[str, Optional[datetime]]:

@@ -158,7 +158,7 @@ def _decide_symbol_actions_v2(
     current_price: float,
     offset_usd: float,
     zone: Optional[int],
-    previous_zone: Optional[int],
+    previous_zone: int,  # 不再是 Optional，最小值是 0
     order_info: Dict[str, Any],
     last_fill_time: Optional[datetime],
     config: Dict[str, Any]
@@ -244,17 +244,24 @@ def _decide_symbol_actions_v2(
             ))
             return actions
 
-    # ========== 决策3: Zone恶化强制重新下单 ==========
-    if has_active_order and previous_zone is not None and zone is not None and zone > previous_zone:
-        logger.info(f"{symbol}: 📈 Zone worsened: {previous_zone} → {zone}, forcing re-order")
-        actions.append(TradingAction(
-            type=ActionType.CANCEL_ORDER,
-            symbol=symbol,
-            reason=f"Zone worsened: {previous_zone} → {zone}"
-        ))
+    # ========== 决策3: Zone恶化强制下单（最高优先级，无视冷却期） ==========
+    # 只要 zone 恶化（zone > previous_zone），立即强制下单，无视冷却期
+    # previous_zone 最小值是 0（从订单/成交/默认计算得出）
+    if zone is not None and zone > previous_zone:
+        logger.warning(f"{symbol}: 🚨 Zone worsened: {previous_zone} → {zone} (${offset_usd:.2f}) - FORCING ORDER (ignoring cooldown)")
+
+        # 取消旧订单（如果有）
+        if has_active_order:
+            actions.append(TradingAction(
+                type=ActionType.CANCEL_ORDER,
+                symbol=symbol,
+                reason=f"Zone worsened: {previous_zone} → {zone}"
+            ))
+
+        # 立即下新订单（无视冷却期）
         actions.append(_create_limit_order_action(
             symbol, offset, offset_usd, cost_basis, zone,
-            f"Re-order due to zone worsening", config
+            f"Emergency order: zone worsened ({previous_zone} → {zone})", config
         ))
         return actions
 
