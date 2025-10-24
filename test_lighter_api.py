@@ -30,22 +30,18 @@ async def test_api():
     print("Lighter API 诊断测试")
     print("=" * 80)
 
-    # 从环境变量或配置文件读取
+    # 从环境变量读取配置
     import os
     from dotenv import load_dotenv
 
-    # 加载测试环境变量
+    # 尝试加载 .env.test（本地测试），否则使用环境变量（Docker）
     env_file = Path(__file__).parent / '.env.test'
-    if not env_file.exists():
-        print(f"\n❌ 错误：找不到 {env_file}")
-        print("\n请创建 .env.test 文件，内容如下：")
-        print("EXCHANGE_PRIVATE_KEY=你的私钥")
-        print("EXCHANGE_ACCOUNT_INDEX=0")
-        print("EXCHANGE_API_KEY_INDEX=0")
-        print("EXCHANGE_BASE_URL=https://mainnet.zklighter.elliot.ai")
-        return
-
-    load_dotenv(env_file)
+    if env_file.exists():
+        print(f"加载本地配置: {env_file}")
+        load_dotenv(env_file)
+    else:
+        # Docker 环境，从环境变量读取
+        print("使用 Docker 环境变量")
 
     config = {
         "private_key": os.getenv("EXCHANGE_PRIVATE_KEY"),
@@ -56,6 +52,12 @@ async def test_api():
 
     if not config["private_key"]:
         print("❌ 错误：EXCHANGE_PRIVATE_KEY 未设置")
+        print("\nDocker 运行方式：")
+        print("  docker exec -it xlp-prod python3 test_lighter_api.py")
+        print("\n本地运行方式：")
+        print("  1. cp .env.test.example .env.test")
+        print("  2. 编辑 .env.test 填入测试账户信息")
+        print("  3. python3 test_lighter_api.py")
         return
 
     print(f"\n配置：")
