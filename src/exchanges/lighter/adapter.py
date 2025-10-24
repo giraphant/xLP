@@ -200,8 +200,8 @@ class LighterExchange(ExchangeInterface):
                 # 单个市场
                 market_id = await self._get_market_id(symbol)
 
-                # 生成认证 token
-                auth_token = self.lighter_client.client.create_auth_token_with_expiry()
+                # 生成认证 token（返回 tuple，取第一个元素）
+                auth_token, _ = self.lighter_client.client.create_auth_token_with_expiry()
 
                 # 使用 client.order_api（需要传入认证 token）
                 response = await self.lighter_client.client.order_api.account_active_orders(
@@ -295,8 +295,8 @@ class LighterExchange(ExchangeInterface):
             if symbol:
                 market_id = await self._get_market_id(symbol)
 
-            # 生成认证 token
-            auth_token = self.lighter_client.client.create_auth_token_with_expiry()
+            # 生成认证 token（返回 tuple，取第一个元素）
+            auth_token, _ = self.lighter_client.client.create_auth_token_with_expiry()
 
             # 使用 client.order_api（需要传入认证 token）
             response = await self.lighter_client.client.order_api.trades(
