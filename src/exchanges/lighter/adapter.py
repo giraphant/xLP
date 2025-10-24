@@ -288,7 +288,6 @@ class LighterExchange(ExchangeInterface):
                 await self.lighter_client.initialize()
 
             cutoff_time = datetime.now() - timedelta(minutes=minutes_back)
-            cutoff_timestamp_ms = int(cutoff_time.timestamp() * 1000)
 
             # 确定要查询的 market_id
             market_id = None
@@ -299,14 +298,13 @@ class LighterExchange(ExchangeInterface):
             auth_token, _ = self.lighter_client.client.create_auth_token_with_expiry()
 
             # 使用 client.order_api（需要传入认证 token）
-            # sort_by 选项: block_height, timestamp, trade_id
+            # 注意：不使用 var_from 参数，改为客户端过滤（var_from 行为不符合预期）
             response = await self.lighter_client.client.order_api.trades(
                 sort_by="timestamp",
                 sort_dir="desc",
                 limit=100,
                 account_index=self.lighter_client.account_index,
                 market_id=market_id,
-                var_from=cutoff_timestamp_ms,
                 authorization=auth_token
             )
 
@@ -344,7 +342,7 @@ class LighterExchange(ExchangeInterface):
                         "order_id": str(trade.trade_id) if hasattr(trade, 'trade_id') else None,
                         "symbol": trade_user_symbol,
                         "side": "sell" if hasattr(trade, 'is_maker_ask') and trade.is_maker_ask else "buy",
-                        "filled_size": float(trade.size) / 1000 if hasattr(trade, 'size') else 0,
+                        "filled_size": float(trade.size) if hasattr(trade, 'size') else 0,
                         "filled_price": float(trade.price) if hasattr(trade, 'price') else 0,
                         "filled_at": filled_at
                     }
