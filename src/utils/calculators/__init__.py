@@ -5,12 +5,11 @@
 """
 from .offset import calculate_offset_and_cost
 from .order import calculate_close_size, calculate_limit_price
-from .zone import calculate_zone, calculate_zone_from_orders
+from .zone import calculate_zone
 
 __all__ = [
     'calculate_offset_and_cost',
     'calculate_close_size',
     'calculate_limit_price',
     'calculate_zone',
-    'calculate_zone_from_orders',
 ]
