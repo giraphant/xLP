@@ -100,7 +100,9 @@ async def prepare_data(
         offsets=offsets,
         zones=zones,
         order_status=order_status,
-        last_fill_times=last_fill_times
+        last_fill_times=last_fill_times,
+        ideal_hedges=ideal_hedges,
+        positions=positions
     )
 
 

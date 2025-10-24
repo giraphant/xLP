@@ -79,28 +79,29 @@ async def _report_to_matsu(data: PreparedData, matsu_reporter):
     上报数据到 Matsu
 
     依赖：monitoring/matsu_reporter.py
-
-    注意：PreparedData 不包含 ideal_hedges 和 positions
-    这些字段需要从其他地方获取，或者 Matsu 报告功能需要重新设计
     """
     try:
-        # TODO: PreparedData 没有 ideal_hedges 和 positions 字段
-        # 需要确认 Matsu 报告的数据来源
-        logger.warning("Matsu reporting temporarily disabled - PreparedData lacks required fields")
-        return
+        # 准备 Matsu 需要的数据格式
+        ideal_hedges = data.ideal_hedges  # {symbol: amount}
+        actual_hedges = data.positions  # {symbol: amount}
 
-        # 原始实现（注释掉，等待修复）:
-        # ideal_hedges = data["ideal_hedges"]
-        # actual_hedges = data["positions"]
-        # cost_bases = {
-        #     symbol: cost
-        #     for symbol, (offset, cost) in data.offsets.items()
-        # }
-        # success = await matsu_reporter.report(
-        #     ideal_hedges=ideal_hedges,
-        #     actual_hedges=actual_hedges,
-        #     cost_bases=cost_bases
-        # )
+        # cost_bases = 从 offsets 中提取成本
+        cost_bases = {
+            symbol: cost
+            for symbol, (offset, cost) in data.offsets.items()
+        }
+
+        # 调用正确的方法名
+        success = await matsu_reporter.report(
+            ideal_hedges=ideal_hedges,
+            actual_hedges=actual_hedges,
+            cost_bases=cost_bases
+        )
+
+        if success:
+            logger.debug("✅ Reported to Matsu")
+        else:
+            logger.warning("⚠️  Matsu report returned failure")
 
     except Exception as e:
         # Matsu 上报失败不应该影响主流程

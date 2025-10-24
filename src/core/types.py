@@ -68,3 +68,5 @@ class PreparedData:
     zones: Dict[str, ZoneInfo]
     order_status: Dict[str, OrderInfo]
     last_fill_times: Dict[str, Optional[datetime]]
+    ideal_hedges: Dict[str, float]  # 理想对冲持仓
+    positions: Dict[str, float]  # 实际持仓
