@@ -93,6 +93,9 @@ class HedgeConfig(BaseSettings):
     close_ratio: float = Field(default=40.0, gt=0, le=100)
     cooldown_after_fill_minutes: int = Field(default=5, ge=0)
 
+    # Dry run 模式
+    dry_run: bool = Field(default=False, alias="DRY_RUN")
+
     # 初始偏移（其他平台的持仓）
     initial_offset_sol: float = Field(default=0.0, alias="INITIAL_OFFSET_SOL")
     initial_offset_eth: float = Field(default=0.0, alias="INITIAL_OFFSET_ETH")

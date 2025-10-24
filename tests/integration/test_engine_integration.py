@@ -143,7 +143,8 @@ class TestEngineIntegration:
             results = await execute_actions(
                 actions,
                 exchange,
-                AsyncMock()  # mock notifier
+                AsyncMock(),  # mock notifier
+                mock_config
             )
 
             # 验证订单已下
@@ -176,7 +177,7 @@ class TestEngineIntegration:
         # === 第一次循环 ===
         data = await prepare_data(mock_config, pool_calculators, exchange, cost_history)
         actions = await decide_actions(data, mock_config)
-        await execute_actions(actions, exchange, AsyncMock())
+        await execute_actions(actions, exchange, AsyncMock(), mock_config)
 
         # 记录第一次的zone
         first_zone = data["zones"]["SOL"]["zone"]
@@ -227,7 +228,7 @@ class TestEngineIntegration:
         # === 第一次循环：下限价单 ===
         data = await prepare_data(mock_config, pool_calculators, exchange, cost_history)
         actions = await decide_actions(data, mock_config)
-        await execute_actions(actions, exchange, AsyncMock())
+        await execute_actions(actions, exchange, AsyncMock(), mock_config)
 
         # === 修改exchange中订单的创建时间模拟超时 ===
         # 找到SOL的订单并修改其创建时间
@@ -249,7 +250,7 @@ class TestEngineIntegration:
         assert market_action.metadata["force_close"] is True
 
         # 执行
-        await execute_actions(actions, exchange, AsyncMock())
+        await execute_actions(actions, exchange, AsyncMock(), mock_config)
 
         # 验证市价单已成交
         market_orders = [o for o in exchange.orders.values()

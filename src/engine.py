@@ -117,7 +117,8 @@ class HedgeEngine:
             results = await execute_actions(
                 actions,
                 self.exchange,
-                self.notifier
+                self.notifier,
+                self.config
             )
 
             # ========== 步骤 4: 报告 ==========

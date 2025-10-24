@@ -19,7 +19,8 @@ logger = logging.getLogger(__name__)
 async def execute_actions(
     actions: List[TradingAction],
     exchange,
-    notifier
+    notifier,
+    config
 ) -> List[Dict[str, Any]]:
     """
     执行所有操作（完全无状态）
@@ -30,12 +31,15 @@ async def execute_actions(
         actions: 决策产生的操作列表
         exchange: 交易所接口
         notifier: 通知器
+        config: 配置对象（检查 dry_run 模式）
 
     Returns:
         执行结果列表 [{"action": TradingAction, "success": bool, ...}, ...]
     """
     logger.info("=" * 50)
     logger.info("⚡ EXECUTING ACTIONS")
+    if config.dry_run:
+        logger.info("🔍 DRY RUN MODE - No real trades will be executed")
     logger.info("=" * 50)
 
     if not actions:
@@ -50,29 +54,44 @@ async def execute_actions(
 
             # 执行限价单
             if action.type == ActionType.PLACE_LIMIT_ORDER:
-                order_id = await _execute_limit_order(
-                    action, exchange
-                )
-                result["success"] = True
-                result["order_id"] = order_id
+                if config.dry_run:
+                    logger.info(f"[DRY RUN] Would place limit order: {action.symbol} {action.side} {action.size:.4f} @ ${action.price:.2f}")
+                    result["success"] = True
+                    result["order_id"] = "DRY_RUN_ORDER"
+                else:
+                    order_id = await _execute_limit_order(
+                        action, exchange
+                    )
+                    result["success"] = True
+                    result["order_id"] = order_id
 
             # 执行市价单
             elif action.type == ActionType.PLACE_MARKET_ORDER:
-                order_id = await _execute_market_order(
-                    action, exchange, notifier
-                )
-                result["success"] = True
-                result["order_id"] = order_id
+                if config.dry_run:
+                    logger.info(f"[DRY RUN] Would place market order: {action.symbol} {action.side} {action.size:.4f}")
+                    result["success"] = True
+                    result["order_id"] = "DRY_RUN_MARKET"
+                else:
+                    order_id = await _execute_market_order(
+                        action, exchange, notifier
+                    )
+                    result["success"] = True
+                    result["order_id"] = order_id
 
             # 撤销订单
             elif action.type == ActionType.CANCEL_ORDER:
-                success = await _execute_cancel_order(
-                    action, exchange
-                )
-                result["success"] = success
+                if config.dry_run:
+                    logger.info(f"[DRY RUN] Would cancel all orders: {action.symbol}")
+                    result["success"] = True
+                else:
+                    success = await _execute_cancel_order(
+                        action, exchange
+                    )
+                    result["success"] = success
 
             # 发送警报
             elif action.type == ActionType.ALERT:
+                # 警报始终发送（即使在 dry run 模式）
                 await _execute_alert(action, notifier)
                 result["success"] = True
 
@@ -90,6 +109,8 @@ async def execute_actions(
     # 统计执行结果
     success_count = sum(1 for r in results if r["success"])
     logger.info(f"✅ Executed {success_count}/{len(results)} actions successfully")
+    if config.dry_run:
+        logger.info("🔍 DRY RUN MODE - No trades were actually executed")
 
     return results
 
