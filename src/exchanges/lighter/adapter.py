@@ -200,10 +200,14 @@ class LighterExchange(ExchangeInterface):
                 # 单个市场
                 market_id = await self._get_market_id(symbol)
 
-                # 使用 client.order_api（带认证）而不是 self.order_api（不带认证）
+                # 生成认证 token
+                auth_token = self.lighter_client.client.create_auth_token_with_expiry()
+
+                # 使用 client.order_api（需要传入认证 token）
                 response = await self.lighter_client.client.order_api.account_active_orders(
                     account_index=self.lighter_client.account_index,
-                    market_id=market_id
+                    market_id=market_id,
+                    authorization=auth_token
                 )
 
                 orders = []
@@ -291,14 +295,18 @@ class LighterExchange(ExchangeInterface):
             if symbol:
                 market_id = await self._get_market_id(symbol)
 
-            # 使用 client.order_api（带认证）
+            # 生成认证 token
+            auth_token = self.lighter_client.client.create_auth_token_with_expiry()
+
+            # 使用 client.order_api（需要传入认证 token）
             response = await self.lighter_client.client.order_api.trades(
                 sort_by="block_number",
                 sort_dir="desc",
                 limit=100,
                 account_index=self.lighter_client.account_index,
                 market_id=market_id,
-                var_from=cutoff_timestamp_ms
+                var_from=cutoff_timestamp_ms,
+                authorization=auth_token
             )
 
             # 解析成交
