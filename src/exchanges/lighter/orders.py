@@ -173,11 +173,11 @@ class LighterOrderManager(LighterMarketManager):
         # Get current market price (already adjusted for 1000X markets by get_price)
         current_price = await self.get_price(symbol)
 
-        # Use 1% slippage for market-like execution (minimal IL)
+        # Use 0.2% slippage for market-like execution (minimal IL)
         if side.lower() == "buy":
-            price = current_price * 1.01  # 1% above market
+            price = current_price * 1.002  # 0.2% above market
         else:
-            price = current_price * 0.99  # 1% below market
+            price = current_price * 0.998  # 0.2% below market
 
         # Convert size for 1000X markets (e.g., 1000BONK)
         size = convert_1000x_size(symbol, size, to_lighter=True)
