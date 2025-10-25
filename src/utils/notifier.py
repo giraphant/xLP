@@ -51,8 +51,19 @@ class Notifier:
                 }
         """
         self.config = config
-        self.apobj = Apprise()
+        self.apobj = Apprise()  # priority=0（默认）
+        self.apobj_high = Apprise()  # priority=1（高优先级）
+        self.apobj_emergency = Apprise()  # priority=2（紧急）
         self.enabled = False
+
+        # 通知冷却：记录上次发送时间 {alert_key: timestamp}
+        self._last_sent = {}
+        # 不同优先级的默认冷却时间（秒）
+        self._cooldown_by_priority = {
+            0: 300,   # priority=0 (强制平仓等): 5 分钟
+            1: 120,   # priority=1 (超阈值): 2 分钟
+            2: 30     # priority=2 (Emergency): 30 秒
+        }
 
         # 加载所有启用的通知服务
         self._load_services()
@@ -67,14 +78,23 @@ class Notifier:
             api_token = pushover_config.get("api_token", "")
 
             if user_key and api_token:
-                # Apprise Pushover URL 格式: pover://user@token
-                # 不在 URL 中设置 priority，让每个通知自己控制优先级
-                url = f'pover://{user_key}@{api_token}'
-                result = self.apobj.add(url)
+                # 添加 3 个不同优先级的 Pushover 服务
+                # Apprise Pushover URL 格式: pover://user@token?priority=X
 
-                if result:
+                # priority=0 (默认)
+                url_normal = f'pover://{user_key}@{api_token}?priority=0'
+                # priority=1 (高)
+                url_high = f'pover://{user_key}@{api_token}?priority=1'
+                # priority=2 (紧急)
+                url_emergency = f'pover://{user_key}@{api_token}?priority=2'
+
+                result1 = self.apobj.add(url_normal)
+                result2 = self.apobj_high.add(url_high)
+                result3 = self.apobj_emergency.add(url_emergency)
+
+                if result1 and result2 and result3:
                     self.enabled = True
-                    logger.info("✅ Pushover notification enabled")
+                    logger.info("✅ Pushover notification enabled (3 priority levels)")
                 else:
                     logger.error("❌ Failed to add Pushover service")
             else:
@@ -155,7 +175,7 @@ class Notifier:
         Args:
             message: 消息内容
             title: 标题（可选）
-            priority: 优先级 (-2到2, 0=正常, 1=高, 2=紧急)
+            priority: 优先级 (0=正常, 1=高, 2=紧急)
             sound: 通知声音（Pushover专用，可选）
             tag: 只发送到特定标签的服务（可选）
 
@@ -166,20 +186,25 @@ class Notifier:
             logger.warning(f"Notifications disabled, skipping: {title or message[:50]}")
             return False
 
-        # 映射优先级到 NotifyType
-        notify_type = self._priority_to_notify_type(priority)
+        # 根据优先级选择对应的 Apprise 对象
+        if priority >= 2:
+            apobj = self.apobj_emergency  # priority=2 (紧急)
+        elif priority == 1:
+            apobj = self.apobj_high  # priority=1 (高)
+        else:
+            apobj = self.apobj  # priority=0 (默认)
 
         try:
             # 发送通知
-            success = await self.apobj.async_notify(
+            success = await apobj.async_notify(
                 title=title or 'Hedge Engine',
                 body=message,
-                notify_type=notify_type,
-                tag=tag  # 只发送到特定服务
+                notify_type=NotifyType.INFO,  # 类型不重要，Pushover 由 URL priority 控制
+                tag=tag
             )
 
             if success:
-                logger.info(f"✅ Notification sent: {title}")
+                logger.info(f"✅ Notification sent (priority={priority}): {title}")
             else:
                 logger.error(f"❌ Notification failed: {title}")
 
@@ -189,42 +214,73 @@ class Notifier:
             logger.error(f"❌ Error sending notification: {e}", exc_info=True)
             return False
 
-    def _priority_to_notify_type(self, priority: int) -> NotifyType:
-        """将优先级映射到 NotifyType"""
-        if priority >= 2:
-            return NotifyType.FAILURE  # 紧急/错误（红色）
-        elif priority == 1:
-            return NotifyType.WARNING  # 警告（黄色）
-        elif priority <= -1:
-            return NotifyType.INFO     # 信息（蓝色）
-        else:
-            return NotifyType.SUCCESS  # 正常（绿色）
+    def _should_send(self, alert_key: str, priority: int = 0) -> bool:
+        """
+        检查是否应该发送通知（冷却检查）
+
+        Args:
+            alert_key: 通知标识 (如 "threshold_exceeded:SOL")
+            priority: 优先级 (0/1/2)
+
+        Returns:
+            是否应该发送
+        """
+        import time
+
+        # 获取该优先级的冷却时间
+        cooldown_seconds = self._cooldown_by_priority.get(priority, 60)
+
+        now = time.time()
+        last_sent = self._last_sent.get(alert_key, 0)
+
+        if now - last_sent >= cooldown_seconds:
+            self._last_sent[alert_key] = now
+            return True
+        return False
 
     # ==================== 通知方法 ====================
 
     async def alert_threshold_exceeded(self, symbol: str, offset_usd: float, offset: float, current_price: float):
-        """阈值超限通知"""
+        """阈值超限通知（2分钟冷却）"""
+        alert_key = f"threshold_exceeded:{symbol}"
+
+        if not self._should_send(alert_key, priority=1):
+            logger.debug(f"Skipping threshold alert for {symbol} (cooling down)")
+            return
+
         message = f"偏移 ${abs(offset_usd):.2f} ({offset:+.4f} {symbol}) @ ${current_price:.2f}"
         await self.send(
             message=message,
             title=f"⚠️ {symbol} 超过阈值",
-            priority=1  # 高优先级（warning）
+            priority=1  # 高优先级（2分钟冷却）
         )
 
     async def alert_force_close(self, symbol: str, size: float, side: str):
-        """强制平仓通知（普通优先级）"""
+        """强制平仓通知（5分钟冷却）"""
+        alert_key = f"force_close:{symbol}"
+
+        if not self._should_send(alert_key, priority=0):
+            logger.debug(f"Skipping force close alert for {symbol} (cooling down)")
+            return
+
         side_cn = "卖出" if side.lower() == "sell" else "买入"
         message = f"强制平仓: {side_cn} {size:.4f} {symbol} (超时未成交)"
         await self.send(
             message=message,
             title=f"⏱️ {symbol} 强制平仓",
-            priority=0  # 普通优先级（normal）
+            priority=0  # 普通优先级（5分钟冷却）
         )
 
     async def alert_system_error(self, message: str):
-        """系统错误通知"""
+        """系统错误通知（30秒冷却）"""
+        alert_key = "system_error"
+
+        if not self._should_send(alert_key, priority=2):
+            logger.debug(f"Skipping system error alert (cooling down)")
+            return
+
         await self.send(
             message=message,
             title="🚨 System Error",
-            priority=2
+            priority=2  # Emergency（30秒冷却）
         )
